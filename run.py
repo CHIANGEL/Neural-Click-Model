@@ -6,6 +6,10 @@ import time
 import pickle
 import argparse
 import logging
+import pprint
+
+from model import Model
+from dataset import Dataset
 
 def parse_args():
     parser = argparse.ArgumentParser('NCM')
@@ -34,7 +38,7 @@ def parse_args():
                                 help='weight decay')
     train_settings.add_argument('--momentum', type=float, default=0.99,
                                 help='momentum')
-    train_settings.add_argument('--dropout_rate', type=float, default=0.5,
+    train_settings.add_argument('--dropout_rate', type=float, default=0,
                                 help='dropout rate')
     train_settings.add_argument('--batch_size', type=int, default=1,
                                 help='train batch size')
@@ -46,30 +50,36 @@ def parse_args():
                                 help='number of dev files')
     train_settings.add_argument('--num_test_files', type=int, default=40,
                                 help='number of test files')
-    train_settings.add_argument('--eval_freq', type=int, default=1000,
+    train_settings.add_argument('--eval_freq', type=int, default=100,
                                 help='the frequency of evaluating on the dev set when training')
     train_settings.add_argument('--check_point', type=int, default=1000,
                                 help='the frequency of saving model')
 
     model_settings = parser.add_argument_group('model settings')
+    model_settings.add_argument('--representation_mode', default='QD',
+                                help='representation mode of queries, documents and interactions')
     model_settings.add_argument('--algo', default='neural_click_model',
                                 help='choose the algorithm to use')
+    model_settings.add_argument('--embed_type', default='QD+Q+D',
+                                help='which type of embeddings to use')
     model_settings.add_argument('--embed_size', type=int, default=128,
-                                help='size of the embeddings')
+                                help='size of the embeddings if embed_type=random')
     model_settings.add_argument('--hidden_size', type=int, default=256,
-                                help='size of LSTM hidden units')
+                                help='size of RNN/LSTM hidden units')
+    model_settings.add_argument('--model_type', default='rnn',
+                                help='use RNN or LSTM')
     model_settings.add_argument('--max_doc_num', type=int, default=10,
                                 help='max number of docs in a query')
 
     path_settings = parser.add_argument_group('path settings')
     path_settings.add_argument('--train_dirs', nargs='+',
-                               default=['../data/20180804'],
+                               default=['data/train_per_query.txt'],
                                help='list of dirs that contain the preprocessed train data')
     path_settings.add_argument('--dev_dirs', nargs='+',
-                               default=['../data/20180805'],
+                               default=['data/dev_per_query.txt'],
                                help='list of dirs that contain the preprocessed dev data')
     path_settings.add_argument('--test_dirs', nargs='+',
-                               default=['../data/20180805'],
+                               default=['data/test_per_query.txt'],
                                help='list of dirs that contain the preprocessed test data')
     path_settings.add_argument('--model_dir', default='./outputs/models/',
                                help='the dir to store models')
@@ -79,7 +89,6 @@ def parse_args():
                                help='the dir to write tensorboard summary')
     path_settings.add_argument('--log_dir', default='./outputs/logs/',
                                help='path of the log file')
-
     path_settings.add_argument('--load_model', type=int, default=-1,
                                help='load model global step')
     path_settings.add_argument('--data_parallel', type=bool, default=False,
@@ -89,7 +98,37 @@ def parse_args():
 
     return parser.parse_args()
 
+def train(args):
+    """
+     Training for NCM starts here
+    """
+    # Get logger
+    logger = logging.getLogger("NCM")
 
+    # Check the data files
+    logger.info('Checking the data files...')
+    for data_path in args.train_dirs + args.dev_dirs:
+        assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
+    
+    # Load dataset
+    logger.info("Loading the dataset...")
+    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs)
+    '''for i in dataset.gen_mini_batches('train', 5, False):
+        pprint.pprint(i)
+        assert 0'''
+
+    # Model initialization
+    logger.info('Initializing the model...')
+    model = Model(args, len(dataset.qid_query), len(dataset.uid_url))
+    if args.load_model > -1:
+        logger.info('Restoring the model...')
+        model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
+    logger.info('Start at model.global_step: {}'.format(model.global_step))
+
+    # Start training
+    logger.info('Training the model...')
+    model.train(dataset)
+    logger.info('Done with model training!')
 
 def run():
     '''
@@ -110,7 +149,7 @@ def run():
     # Logger initializations
     logger = logging.getLogger("NCM")
     logger.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    formatter = logging.Formatter('%(asctime)s: %(message)s')
     file_handler = logging.FileHandler(args.log_dir + time.strftime("%m-%d %H:%M:%S", time.localtime()) + '.log')
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(formatter)

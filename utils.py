@@ -1,8 +1,11 @@
 import os
 
-def save_dict(file_path, file_name, dict):
+def check_path(file_path):
     if not os.path.exists(file_path):
         os.makedirs(file_path)
+
+def save_dict(file_path, file_name, dict):
+    check_path(file_path)
     file = open(file_path + file_name, 'w')
     file.write(str(dict))
     file.close()
@@ -14,8 +17,7 @@ def load_dict(file_path, file_name):
     return eval(file.read())
     
 def save_list(file_path, file_name, list_data):
-    if not os.path.exists(file_path):
-        os.makedirs(file_path)
+    check_path(file_path)
     file = open(file_path + file_name, 'w')
     file.write(str(list_data))
     file.close()
@@ -27,8 +29,7 @@ def load_list(file_path, file_name):
     return eval(file.read())
 
 def generate_data_per_session(infos_per_session, indices, file_path, file_name):
-    if not os.path.exists(file_path):
-        os.makedirs(file_path)
+    check_path(file_path)
     file = open(file_path + file_name, 'w')
     for key in indices:
         query_sequence_for_print = []
@@ -48,8 +49,7 @@ def generate_data_per_session(infos_per_session, indices, file_path, file_name):
     file.close()
 
 def generate_data_per_query(infos_per_query, indices, file_path, file_name):
-    if not os.path.exists(file_path):
-        os.makedirs(file_path)
+    check_path(file_path)
     file = open(file_path + file_name, 'w')
     for key in indices:
         interaction_info = infos_per_query[key]
