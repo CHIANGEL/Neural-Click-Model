@@ -50,7 +50,7 @@ def parse_args():
                                 help='number of dev files')
     train_settings.add_argument('--num_test_files', type=int, default=40,
                                 help='number of test files')
-    train_settings.add_argument('--eval_freq', type=int, default=100,
+    train_settings.add_argument('--eval_freq', type=int, default=1000,
                                 help='the frequency of evaluating on the dev set when training')
     train_settings.add_argument('--check_point', type=int, default=1000,
                                 help='the frequency of saving model')
@@ -58,7 +58,7 @@ def parse_args():
     model_settings = parser.add_argument_group('model settings')
     model_settings.add_argument('--representation_mode', default='QD',
                                 help='representation mode of queries, documents and interactions')
-    model_settings.add_argument('--algo', default='neural_click_model',
+    model_settings.add_argument('--algo', default='NCM',
                                 help='choose the algorithm to use')
     model_settings.add_argument('--embed_type', default='QD+Q+D',
                                 help='which type of embeddings to use')
@@ -109,13 +109,11 @@ def train(args):
     logger.info('Checking the data files...')
     for data_path in args.train_dirs + args.dev_dirs:
         assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
+    assert len(args.train_dirs) > 0, 'No train files are provided.'
     
     # Load dataset
     logger.info("Loading the dataset...")
     dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs)
-    '''for i in dataset.gen_mini_batches('train', 5, False):
-        pprint.pprint(i)
-        assert 0'''
 
     # Model initialization
     logger.info('Initializing the model...')
@@ -123,12 +121,93 @@ def train(args):
     if args.load_model > -1:
         logger.info('Restoring the model...')
         model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
-    logger.info('Start at model.global_step: {}'.format(model.global_step))
+    logger.info('Start training at model.global_step: {}'.format(model.global_step))
 
     # Start training
-    logger.info('Training the model...')
+    logger.info('Training the model on training set...')
     model.train(dataset)
     logger.info('Done with model training!')
+
+def evaluate(args):
+    """
+     Evaluate the pre-trained model on dev dataset
+    """
+    # Get logger
+    logger = logging.getLogger("NCM")
+
+    # Check the data files
+    logger.info('Checking the data files...')
+    for data_path in args.train_dirs + args.dev_dirs:
+        assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
+    assert len(args.dev_dirs) > 0, 'No dev files are provided.'
+
+    # Load dataset
+    logger.info("Loading the dataset...")
+    dataset = Dataset(args, dev_dirs=args.dev_dirs)
+
+    # Model Construction
+    logger.info('Constructing the model...')
+    model = Model(args, len(dataset.qid_query), len(dataset.uid_url))
+
+    # Restore the pre-trained model
+    logger.info('Restoring the pre-trained model...')
+    assert args.load_model > -1, 'args.load_model should be set at evaluation period!' # make sure there is something to store at evaluation
+    model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
+    logger.info('Start evaluation at model.global_step: {}'.format(model.global_step))
+
+    # Start evaluation
+    logger.info('Evaluating the model on dev set...')
+    dev_batches = dataset.gen_mini_batches('dev', args.batch_size, shuffle=False)
+    dev_loss = model.evaluate(dev_batches, dataset, result_dir=args.result_dir,
+                              result_prefix='evaluate.dev.predicted.{}.{}.{}'.format(args.algo, args.load_model, time.strftime("%m-%d %H:%M:%S", time.localtime())))
+    logger.info('Loss on dev set: {}'.format(dev_loss))
+    logger.info('Predicted results are saved to {}'.format(os.path.join(args.result_dir)))
+    logger.info('Done with model evaluation!')
+
+def predict(args):
+    """
+     Predict answers for test files
+    """
+    # Get logger
+    logger = logging.getLogger("NCM")
+
+    # Check the data files
+    logger.info('Checking the data files...')
+    for data_path in args.test_files:
+        assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
+    assert len(args.test_files) > 0, 'No test files are provided.'
+
+    # Load dataset
+    logger.info("Loading the dataset...")
+    dataset = Dataset(args, test_files=args.test_files)
+
+    # Model Construction
+    logger.info('Constructing the model...')
+    model = Model(args, len(dataset.qid_query), len(dataset.uid_url))
+
+    # Restore the pre-trained model
+    logger.info('Restoring the pre-trained model...')
+    assert args.load_model > -1, 'args.load_model should be set at evaluation period!' # make sure there is something to store at evaluation
+    model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
+    logger.info('Start prediction at model.global_step: {}'.format(model.global_step))
+
+    # Start prediction
+    logger.info('Predicting the model on test set...')
+    dev_batches = dataset.gen_mini_batches('test', args.batch_size, shuffle=False)
+    dev_loss = model.evaluate(dev_batches, dataset, result_dir=args.result_dir,
+                              result_prefix='evaluate.dev.predicted.{}.{}.{}'.format(args.algo, args.load_model, time.strftime("%m-%d %H:%M:%S", time.localtime())))
+    logger.info('Loss on dev set: {}'.format(dev_loss))
+    logger.info('Predicted results are saved to {}'.format(os.path.join(args.result_dir)))
+    logger.info('Done with model evaluation!')
+
+
+    logger.info('Predicting answers for test set...')
+    test_batches = dataset.gen_mini_batches('test', args.batch_size,
+                                             pad_id=vocab.get_id(vocab.pad_token),
+                                             shuffle=False)
+    model.evaluate(test_batches, dataset,
+                     result_dir=args.result_dir,
+                     result_prefix='test.predicted.{}.{}.{}'.format(args.algo, args.load_model, time.time()))
 
 def run():
     '''

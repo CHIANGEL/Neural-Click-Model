@@ -229,7 +229,7 @@ class Model(object):
         # Load the optimizer
         optimizer_path = os.path.join(model_dir, model_prefix + '_{}.optimizer'.format(global_step))
         if not os.path.isfile(optimizer_path):
-            optimizer_path = os.path.join(model_dir, model_prefix + '_best_{}.optimizer'.format(global_step))
+            optimizer_path = os.path.join(model_dir, model_prefix + '_{}.optimizer'.format(global_step))
         if os.path.isfile(optimizer_path):
             self.optimizer.load_state_dict(torch.load(optimizer_path))
             self.logger.info('Optimizer restored from {}, with prefix {} and global step {}.'.format(model_dir, model_prefix, global_step))
@@ -237,7 +237,7 @@ class Model(object):
         # Load the NCM model
         model_path = os.path.join(model_dir, model_prefix + '_{}.model'.format(global_step))
         if not os.path.isfile(model_path):
-            model_path = os.path.join(model_dir, model_prefix + '_best_{}.model'.format(global_step))
+            model_path = os.path.join(model_dir, model_prefix + '_{}.model'.format(global_step))
         if use_cuda:
             state_dict = torch.load(model_path)
         else:
