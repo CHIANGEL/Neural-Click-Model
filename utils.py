@@ -1,4 +1,5 @@
 import os
+import pprint
 
 def check_path(file_path):
     if not os.path.exists(file_path):
@@ -33,18 +34,24 @@ def generate_data_per_session(infos_per_session, indices, file_path, file_name):
     file = open(file_path + file_name, 'w')
     for key in indices:
         query_sequence_for_print = []
+        prev_document_info_for_print = []
         info_per_session = infos_per_session[key]
         interaction_infos = info_per_session['interactions']
         for interaction_info in interaction_infos:
-            docs = interaction_info['docs']
             qid = interaction_info['qid']
+            uids = interaction_info['uids']
+            clicks = interaction_info['clicks']
             query_sequence_for_print.append(qid)
-            for doc in docs:
-                click = doc['click']
-                uid = doc['uid']
-                rank = doc['rank']
-                document_info_for_print = [uid, rank, click]
-                file.write('{}\t{}\n'.format(str(query_sequence_for_print), str(document_info_for_print)))
+            for idx, uid in enumerate(uids):
+                click = clicks[idx]
+                rank = idx + 1
+                # No vertical information in demo Yandex dataset
+                document_info_for_print = [uid, rank, 1] 
+                file.write('{}\t{}\t{}\t{}\n'.format(str(query_sequence_for_print), 
+                                                     str(prev_document_info_for_print), 
+                                                     str(document_info_for_print),
+                                                     click))
+                prev_document_info_for_print = [uid, rank, 1, click]
         file.write('\n')
     file.close()
 
@@ -53,13 +60,32 @@ def generate_data_per_query(infos_per_query, indices, file_path, file_name):
     file = open(file_path + file_name, 'w')
     for key in indices:
         interaction_info = infos_per_query[key]
-        docs = interaction_info['docs']
         qid = interaction_info['qid']
-        for doc in docs:
-            click = doc['click']
-            uid = doc['uid']
-            rank = doc['rank']
+        uids = interaction_info['uids']
+        clicks = interaction_info['clicks']
+        for idx, uid in enumerate(uids):
+            click = clicks[idx]
+            rank = idx + 1
             document_info_for_print = [uid, rank, click]
             file.write('{}\t{}\n'.format(str([qid]), str(document_info_for_print)))
         file.write('\n')
     file.close()
+
+def get_unique_queries(sessions):
+    """
+     Extracts and returns the set of unique queries contained in a given list of search sessions.
+    """
+    queries = set()
+    for session in sessions:
+        queries.add(search_session.query)
+    return queries
+
+def filter_sessions(sessions, queries):
+    """
+     Filters the given list of search sessions so that it contains only a given list of queries.
+    """
+    filtered_sessions = []
+    for session in sessions:
+        if session[''] in queries:
+            filtered_sessions.append(session)
+    return filtered_sessions
