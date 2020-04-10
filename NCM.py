@@ -24,10 +24,10 @@ class NCM(nn.Module):
 
         # create embeddings
         if self.args.embed_type == 'QD+Q+D':
-            query_embedding_QDQ = torch.load('data/embedding/query_embedding_QDQ.embed')
+            query_embedding_QDQ = torch.load('data/Yandex/query_embedding.emb')
             self.query_embedding = nn.Embedding(query_embedding_QDQ.size(0), query_embedding_QDQ.size(1))
             self.query_embedding.weight.data.copy_(query_embedding_QDQ)
-            doc_embedding_QDQD = torch.load('data/embedding/doc_embedding_QDQD.embed')
+            doc_embedding_QDQD = torch.load('data/Yandex/doc_embedding.emb')
             self.doc_embedding = nn.Embedding(doc_embedding_QDQD.size(0), doc_embedding_QDQD.size(1))
             self.doc_embedding.weight.data.copy_(doc_embedding_QDQD)
         elif self.args.embed_type == 'random':

@@ -25,14 +25,11 @@ class Dataset(object):
         self.num_test_files = args.num_test_files
 
         # load pre-proccessed dicts & lists
-        self.query_qid = load_dict('data/dict', 'query_qid.dict')
-        self.qid_query = load_dict('data/dict', 'qid_query.dict')
-        self.url_uid = load_dict('data/dict', 'url_uid.dict')
-        self.uid_url = load_dict('data/dict', 'uid_url.dict')
-        self.uid_description = load_dict('data/dict', 'uid_description.dict')
-        self.infos_per_query = load_list('data/', 'infos_per_query.list')
+        self.query_qid = load_dict('data/' + args.dataset, 'query_qid.dict')
+        self.url_uid = load_dict('data/' + args.dataset, 'url_uid.dict')
+        self.infos_per_query = load_list('data/' + args.dataset, 'infos_per_query.list')
 
-        # load train & dev data
+        # load train & dev & test data
         self.train_set, self.dev_set, self.test_set = [], [], []
         if isRank:
             if train_dirs:
