@@ -172,6 +172,7 @@ class Dataset(object):
         # Because batch_size % gpu_num == 0
         # So that len(data) % batch_size == 0  <=> len(data) % gpu_num == 0
         indices += indices[0: (self.args.batch_size - data_size % self.args.batch_size) % self.args.batch_size]
+        assert len(indices) % self.args.batch_size == 0
         for batch_start in np.arange(0, len(list(indices)), batch_size):
             batch_indices = indices[batch_start: batch_start + batch_size]
             yield self._one_mini_batch(data, batch_indices)

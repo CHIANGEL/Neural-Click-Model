@@ -93,7 +93,7 @@ def parse_args():
                                help='path of the log file')
     path_settings.add_argument('--load_model', type=int, default=-1,
                                help='load model global step')
-    path_settings.add_argument('--data_parallel', type=bool, default=False,
+    path_settings.add_argument('--data_parallel', action='store_true',
                                help='data_parallel')
     path_settings.add_argument('--gpu_num', type=int, default=1,
                                help='gpu_num')

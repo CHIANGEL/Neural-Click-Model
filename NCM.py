@@ -55,8 +55,8 @@ class NCM(nn.Module):
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, query, doc, clicks):
-        assert self.args.batch_size == query.size(0)
-        batch_size = self.args.batch_size
+        # assert self.args.batch_size == query.size(0)
+        batch_size = query.size(0)
         max_doc_num = doc.size(1)
 
         query_embed = self.query_embedding(query)  # [batch_size, 1, query_embed_size]
