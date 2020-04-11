@@ -13,7 +13,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 from tqdm import tqdm
 from tensorboardX import SummaryWriter
-
+from utils import *
 from NCM import NCM
 
 use_cuda = torch.cuda.is_available()
@@ -40,15 +40,40 @@ class Model(object):
         self.patience = args.patience
         self.max_doc_num = args.max_doc_num
         self.writer = SummaryWriter(self.args.summary_dir) if args.train else None
+
+        # create embeddings
+        if self.args.embed_type == 'QD+Q+D':
+            query_embedding_QDQ = torch.load('data/Yandex/query_embedding.emb')
+            self.query_embedding = nn.Embedding(query_embedding_QDQ.size(0), query_embedding_QDQ.size(1))
+            self.query_embedding.weight.data.copy_(query_embedding_QDQ)
+            doc_embedding_QDQD = torch.load('data/Yandex/doc_embedding.emb')
+            self.doc_embedding = nn.Embedding(doc_embedding_QDQD.size(0), doc_embedding_QDQD.size(1))
+            self.doc_embedding.weight.data.copy_(doc_embedding_QDQD)
+        elif self.args.embed_type == 'random':
+            # use random embedding
+            self.query_embedding = nn.Embedding(query_size, self.embed_size)
+            self.doc_embedding = nn.Embedding(doc_size, self.embed_size)
+        else:
+            raise NotImplementedError('Unsupported embed_type: {}'.format(self.args.embed_type))
         
         # create the NCM model instance
-        self.model = NCM(self.args, query_size, doc_size)
+        get_gpu_infos()
+        if self.args.model_type.lower() == 'rnn':
+            input_size = 1 + self.doc_embedding.weight.data.size(1),
+        elif self.args.model_type.lower() == 'lstm':
+            input_size = 1 + self.doc_embedding.weight.data.size(1) + self.query_embedding.weight.data.size(1)
+        else:
+            raise NotImplementedError('Unsupported model_type: {}'.format(self.args.model_type))
+        self.model = NCM(self.args, query_size, doc_size, input_size)
         self.optimizer = self.create_train_optim()
         self.criterion = nn.MSELoss()
         if use_cuda:
             self.model = self.model.cuda()
         if args.data_parallel:
             self.model = nn.DataParallel(self.model)
+        para = sum([np.prod(list(p.size())) for p in self.model.parameters()])
+        print('Model {} : params: {:4f}M'.format(self.model._get_name(), para * 4 / 1000 / 1000))
+        get_gpu_infos()
        
     def create_train_optim(self):
         """
@@ -114,8 +139,10 @@ class Model(object):
             tmp = torch.zeros(CLICKS.size(0), 1).long()
             CLICKS = torch.cat((tmp, CLICKS), 1) # CLICKS stands for interaction representation in NCM paper
 
+            query_embed = self.query_embedding(QIDS)  # [batch_size, 1, query_embed_size]
+            doc_embed = self.doc_embedding(UIDS)  # [batch_size, 10, doc_embed_size]
             if use_cuda:
-                QIDS, UIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), CLICKS.cuda()
+                query_embed, doc_embed, CLICKS = query_embed.cuda(), doc_embed.cuda(), CLICKS.cuda()
             
             # print('QIDS: {}\n{}\n'.format(QIDS.size(), QIDS))
             # print('UIDS: {}\n{}\n'.format(UIDS.size(), UIDS))
@@ -123,7 +150,7 @@ class Model(object):
 
             self.model.train()
             self.optimizer.zero_grad()
-            pred_logits = self.model(QIDS, UIDS, CLICKS)
+            pred_logits = self.model(query_embed, doc_embed, CLICKS)
             loss, loss_list = self.compute_loss(pred_logits, batch['clicks'])
             loss.backward()
             self.optimizer.step()
@@ -188,11 +215,13 @@ class Model(object):
                 tmp = torch.zeros(CLICKS.size(0), 1).long()
                 CLICKS = torch.cat((tmp, CLICKS), 1) # CLICKS stands for interaction representation in NCM paper
 
+                query_embed = self.query_embedding(QIDS)  # [batch_size, 1, query_embed_size]
+                doc_embed = self.doc_embedding(UIDS)  # [batch_size, 10, doc_embed_size]
                 if use_cuda:
-                    QIDS, UIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), CLICKS.cuda()
+                    query_embed, doc_embed, CLICKS = query_embed.cuda(), doc_embed.cuda(), CLICKS.cuda()
 
                 self.model.eval()
-                pred_logits = self.model(QIDS, UIDS, CLICKS)
+                pred_logits = self.model(query_embed, doc_embed, CLICKS)
                 loss, loss_list = self.compute_loss(pred_logits, batch['clicks'])
 
                 for eval_loss, data, pred_logit in zip(loss_list, batch['raw_data'], pred_logits.data.cpu().numpy().tolist()):

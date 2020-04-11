@@ -89,3 +89,34 @@ def filter_sessions(sessions, queries):
         if session[''] in queries:
             filtered_sessions.append(session)
     return filtered_sessions
+
+from pynvml import *
+def get_gpu_infos():
+    print('-------------------------------------------')
+    nvmlInit()     #初始化
+    print("  Driver: {}".format(nvmlSystemGetDriverVersion()))  #显示驱动信息
+    #>>> Driver: 384.xxx
+
+    #查看设备
+    deviceCount = nvmlDeviceGetCount()
+    for i in range(deviceCount):
+        handle = nvmlDeviceGetHandleByIndex(i)
+        print("  GPU", i, ":", nvmlDeviceGetName(handle))
+    #>>>
+    #GPU 0 : b'GeForce GTX 1080 Ti'
+    #GPU 1 : b'GeForce GTX 1080 Ti'
+
+    #查看显存、温度、风扇、电源
+    handle = nvmlDeviceGetHandleByIndex(0)
+    info = nvmlDeviceGetMemoryInfo(handle)
+    print("  Memory Total: ", info.total)
+    print("  Memory Free: ", info.free)
+    print("  Memory Used: ", info.used)
+
+    print("  Temperature is %d C" % nvmlDeviceGetTemperature(handle,0))
+    print("  Fan speed is ", nvmlDeviceGetFanSpeed(handle))
+    print("  Power ststus", nvmlDeviceGetPowerState(handle))
+
+    #最后要关闭管理工具
+    nvmlShutdown()
+    print('-------------------------------------------')
