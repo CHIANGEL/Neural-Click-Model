@@ -72,7 +72,7 @@ class Model(object):
         if args.data_parallel:
             self.model = nn.DataParallel(self.model)
         para = sum([np.prod(list(p.size())) for p in self.model.parameters()])
-        print('Model {} : params: {:4f}M'.format(self.model._get_name(), para * 4 / 1000 / 1000))
+        self.logger.info('Model {} : params: {:4f}M'.format(self.model._get_name(), para * 4 / 1000 / 1000))
         get_gpu_infos()
        
     def create_train_optim(self):
