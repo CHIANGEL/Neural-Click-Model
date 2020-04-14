@@ -120,3 +120,26 @@ def get_gpu_infos():
     #最后要关闭管理工具
     nvmlShutdown()
     print('-------------------------------------------')
+
+def xml_line_removable(xml_line):
+    if xml_line.find('<query>') != -1 and xml_line.find('</query>') != -1:
+        return 1
+    elif xml_line.find('<url>') != -1 and xml_line.find('</url>') != -1:
+        return 1
+    elif xml_line.find('<title>') != -1 and xml_line.find('</title>') != -1:
+        return 1
+    elif xml_line.find('<relevance>') != -1 or xml_line.find('</relevance>') != -1:
+        return 1
+    elif xml_line.find('<TACM>') != -1 and xml_line.find('</TACM>') != -1:
+        return 1
+    elif xml_line.find('<PSCM>') != -1 and xml_line.find('</PSCM>') != -1:
+        return 1
+    elif xml_line.find('<THCM>') != -1 and xml_line.find('</THCM>') != -1:
+        return 1
+    elif xml_line.find('<UBM>') != -1 and xml_line.find('</UBM>') != -1:
+        return 1
+    elif xml_line.find('<DBN>') != -1 and xml_line.find('</DBN>') != -1:
+        return 1
+    elif xml_line.find('<POM>') != -1 and xml_line.find('</POM>') != -1:
+        return 1
+    return 0

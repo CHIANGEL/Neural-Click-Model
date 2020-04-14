@@ -16,47 +16,40 @@ import torch
 import torch.nn as nn
 from utils import *
 
-def remove_title_element(args):
+def xml_clean(args):
     # open xml file reader & writer
     xml_reader = open(os.path.join(args.input, args.dataset), 'r')
     xml_writer = open(os.path.join(args.input, 'clean-' + args.dataset), 'w')
     # print(xml_reader)
     # print(xml_writer)
 
-    # remove <title>...</title>
+    # remove useless lines
     read_line_count = 0
-    removed_title_count = 0
+    removed_line_count = 0
+    interaction_count = 0
     print('  - {}'.format('start reading from xml file...'))
     xml_lines = xml_reader.readlines()
     print('  - {}'.format('read {} lines'.format(len(xml_lines))))
-    print('  - {}'.format('start removing <title> elements...'))
+    print('  - {}'.format('start removing useless lines...'))
     for xml_line in xml_lines:
         # print(xml_line, end='')
-        if xml_line:
-            read_line_count += 1
-            title_start_index = xml_line.find('<title>')
-            title_end_index = xml_line.find('</title>')
-            if title_start_index != -1 and title_end_index != -1:
-                # A line that contains a <title> element
-                removed_title_count += 1
-                if removed_title_count % 1000000 == 0:
-                    print('  - {}'.format('remove {} title elements...'.format(removed_title_count)))
-            elif title_start_index == -1 and title_end_index == -1:
-                # A line that does not contains a <title> element
-                xml_writer.write(xml_line)
-            else:
-                # Partially contain <title> or </title>, raise Error
-                print('  - {}'.format(xml_line))
-                raise BaseException('There is a line that only partially contains <title> or </title>')
+        read_line_count += 1
+        if xml_line.find('<interaction num=') != -1:
+            interaction_count += 1
+        if xml_line_removable(xml_line):
+            # A line that should be removed
+            removed_line_count += 1
+            if removed_line_count % 1000000 == 0:
+                print('  - {}'.format('remove {} lines...'.format(removed_line_count)))
         else:
-            # Otherwise, readline() reads the file repeatedly
-            break
+            xml_writer.write(xml_line)
     
-    # there are 10 docs for each query, removed_title_count should be divisible by 10
+    # It is guaranteed that there are 10 docs for each query
     assert read_line_count == len(xml_lines)
-    assert removed_title_count % 10 == 0
+    assert removed_line_count == interaction_count + interaction_count * 10 * (1 + 1 + 2 + 6)
     print('  - {}'.format('read {} lines'.format(read_line_count)))
-    print('  - {}'.format('totally remove {} title elements'.format(removed_title_count)))
+    print('  - {}'.format('totally {} iteractions'.format(interaction_count)))
+    print('  - {}'.format('totally remove {} lines'.format(removed_line_count)))
     args.dataset = 'clean-' + args.dataset
 
 def generate_dict_list(args):
@@ -373,8 +366,8 @@ def main():
                         help='input path')
     parser.add_argument('--output', default='../data/TianGong-ST/',
                         help='output path')
-    parser.add_argument('--remove_title', action='store_true',
-                        help='remove title element in xml file, due to the existence of messy code')
+    parser.add_argument('--xml_clean', action='store_true',
+                        help='remove useless lines in xml files, to reduce the size of xml file')
     parser.add_argument('--dict_list', action='store_true',
                         help='generate dicts and lists for info_per_session/info_per_query')
     parser.add_argument('--data_txt', action='store_true',
@@ -388,10 +381,10 @@ def main():
     parser.add_argument('--pyclick', action='store_true',
                         help='generate data files for repo Pyclick')
     args = parser.parse_args()
-    if args.remove_title:
-        # remove title element in xml file, due to the existence of messy code
-        print('===> {}'.format('removing <title> element in xml file...'))
-        remove_title_element(args)
+    if args.xml_clean:
+        # remove useless lines in xml files, to reduce the size of xml file
+        print('===> {}'.format('cleaning xml file...'))
+        xml_clean(args)
     if args.dict_list:
         # generate info_per_session & info_per_query
         print('===> {}'.format('generating dicts and lists...'))
