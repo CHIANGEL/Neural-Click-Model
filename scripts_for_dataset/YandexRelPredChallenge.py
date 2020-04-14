@@ -254,7 +254,7 @@ def main():
         generate_dict_list(args)
     if args.data_txt:
         # load lists saved by generate_dict_list() and generates train.txt & dev.txt & test.txt
-        print('===> {}'.format('generating train & dev data txt...'))
+        print('===> {}'.format('generating train & dev & test data txt...'))
         generate_data_txt(args)
     if args.embedding:
         # generate embeddings of query, document and interaction for NCM infos_per_query

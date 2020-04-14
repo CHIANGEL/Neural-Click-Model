@@ -8,3 +8,9 @@ doc_embedding_QD not supported: not enough memory
 Directly concatenate doc_embedding and interaction_embedding (binary vector of size 1)
 
 LSTM + QD+Q+D
+
+## Usage
+
+First use scripts in scripts_for_dataset to generate useful data files from xml files.
+
+Then run the NCM model to train & test
