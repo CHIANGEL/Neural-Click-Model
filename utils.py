@@ -1,4 +1,5 @@
 import os
+import pprint
 
 def check_path(file_path):
     if not os.path.exists(file_path):
@@ -33,18 +34,24 @@ def generate_data_per_session(infos_per_session, indices, file_path, file_name):
     file = open(file_path + file_name, 'w')
     for key in indices:
         query_sequence_for_print = []
+        prev_document_info_for_print = []
         info_per_session = infos_per_session[key]
         interaction_infos = info_per_session['interactions']
         for interaction_info in interaction_infos:
-            docs = interaction_info['docs']
             qid = interaction_info['qid']
+            uids = interaction_info['uids']
+            clicks = interaction_info['clicks']
             query_sequence_for_print.append(qid)
-            for doc in docs:
-                click = doc['click']
-                uid = doc['uid']
-                rank = doc['rank']
-                document_info_for_print = [uid, rank, click]
-                file.write('{}\t{}\n'.format(str(query_sequence_for_print), str(document_info_for_print)))
+            for idx, uid in enumerate(uids):
+                click = clicks[idx]
+                rank = idx + 1
+                # No vertical information in demo Yandex dataset
+                document_info_for_print = [uid, rank, 1] 
+                file.write('{}\t{}\t{}\t{}\n'.format(str(query_sequence_for_print), 
+                                                     str(prev_document_info_for_print), 
+                                                     str(document_info_for_print),
+                                                     click))
+                prev_document_info_for_print = [uid, rank, 1, click]
         file.write('\n')
     file.close()
 
@@ -53,13 +60,63 @@ def generate_data_per_query(infos_per_query, indices, file_path, file_name):
     file = open(file_path + file_name, 'w')
     for key in indices:
         interaction_info = infos_per_query[key]
-        docs = interaction_info['docs']
         qid = interaction_info['qid']
-        for doc in docs:
-            click = doc['click']
-            uid = doc['uid']
-            rank = doc['rank']
+        uids = interaction_info['uids']
+        clicks = interaction_info['clicks']
+        for idx, uid in enumerate(uids):
+            click = clicks[idx]
+            rank = idx + 1
             document_info_for_print = [uid, rank, click]
             file.write('{}\t{}\n'.format(str([qid]), str(document_info_for_print)))
         file.write('\n')
     file.close()
+
+def get_unique_queries(sessions):
+    """
+     Extracts and returns the set of unique queries contained in a given list of search sessions.
+    """
+    queries = set()
+    for session in sessions:
+        queries.add(search_session.query)
+    return queries
+
+def filter_sessions(sessions, queries):
+    """
+     Filters the given list of search sessions so that it contains only a given list of queries.
+    """
+    filtered_sessions = []
+    for session in sessions:
+        if session[''] in queries:
+            filtered_sessions.append(session)
+    return filtered_sessions
+
+from pynvml import *
+def get_gpu_infos():
+    print('-------------------------------------------')
+    nvmlInit()     #初始化
+    print("  Driver: {}".format(nvmlSystemGetDriverVersion()))  #显示驱动信息
+    #>>> Driver: 384.xxx
+
+    #查看设备
+    deviceCount = nvmlDeviceGetCount()
+    for i in range(deviceCount):
+        handle = nvmlDeviceGetHandleByIndex(i)
+        print("  GPU", i, ":", nvmlDeviceGetName(handle))
+    #>>>
+    #GPU 0 : b'GeForce GTX 1080 Ti'
+    #GPU 1 : b'GeForce GTX 1080 Ti'
+
+    #查看显存、温度、风扇、电源
+    handle = nvmlDeviceGetHandleByIndex(0)
+    info = nvmlDeviceGetMemoryInfo(handle)
+    print("  Memory Total: ", info.total)
+    print("  Memory Free: ", info.free)
+    print("  Memory Used: ", info.used)
+
+    print("  Temperature is %d C" % nvmlDeviceGetTemperature(handle,0))
+    print("  Fan speed is ", nvmlDeviceGetFanSpeed(handle))
+    print("  Power ststus", nvmlDeviceGetPowerState(handle))
+
+    #最后要关闭管理工具
+    nvmlShutdown()
+    print('-------------------------------------------')
