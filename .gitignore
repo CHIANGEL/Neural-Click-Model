@@ -1,6 +1,7 @@
 __pycache__
 data
 outputs
+outputs_batch1
 *.err
 *.out
 *.sh
