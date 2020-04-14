@@ -14,6 +14,8 @@ from dataset import Dataset
 def parse_args():
     parser = argparse.ArgumentParser('NCM')
 
+    parser.add_argument('--dataset', default='Yandex',
+                        help='name of the dataset')
     parser.add_argument('--train', action='store_true',
                         help='train the model')
     parser.add_argument('--evaluate', action='store_true',
@@ -73,13 +75,13 @@ def parse_args():
 
     path_settings = parser.add_argument_group('path settings')
     path_settings.add_argument('--train_dirs', nargs='+',
-                               default=['data/train_per_query.txt'],
+                               default=['data/Yandex/train_per_query.txt'],
                                help='list of dirs that contain the preprocessed train data')
     path_settings.add_argument('--dev_dirs', nargs='+',
-                               default=['data/dev_per_query.txt'],
+                               default=['data/Yandex/dev_per_query.txt'],
                                help='list of dirs that contain the preprocessed dev data')
     path_settings.add_argument('--test_dirs', nargs='+',
-                               default=['data/test_per_query.txt'],
+                               default=['data/Yandex/test_per_query.txt'],
                                help='list of dirs that contain the preprocessed test data')
     path_settings.add_argument('--model_dir', default='./outputs/models/',
                                help='the dir to store models')
@@ -91,7 +93,7 @@ def parse_args():
                                help='path of the log file')
     path_settings.add_argument('--load_model', type=int, default=-1,
                                help='load model global step')
-    path_settings.add_argument('--data_parallel', type=bool, default=False,
+    path_settings.add_argument('--data_parallel', action='store_true',
                                help='data_parallel')
     path_settings.add_argument('--gpu_num', type=int, default=1,
                                help='gpu_num')
@@ -117,7 +119,7 @@ def train(args):
 
     # Model initialization
     logger.info('Initializing the model...')
-    model = Model(args, len(dataset.qid_query), len(dataset.uid_url))
+    model = Model(args, len(dataset.query_qid), len(dataset.url_uid))
     if args.load_model > -1:
         logger.info('Restoring the model...')
         model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
@@ -147,7 +149,7 @@ def evaluate(args):
 
     # Model Construction
     logger.info('Constructing the model...')
-    model = Model(args, len(dataset.qid_query), len(dataset.uid_url))
+    model = Model(args, len(dataset.query_qid), len(dataset.url_uid))
 
     # Restore the pre-trained model
     logger.info('Restoring the pre-trained model...')
@@ -183,7 +185,7 @@ def predict(args):
 
     # Model Construction
     logger.info('Constructing the model...')
-    model = Model(args, len(dataset.qid_query), len(dataset.uid_url))
+    model = Model(args, len(dataset.query_qid), len(dataset.url_uid))
 
     # Restore the pre-trained model
     logger.info('Restoring the pre-trained model...')

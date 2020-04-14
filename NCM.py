@@ -9,7 +9,7 @@ import logging
 use_cuda = torch.cuda.is_available()
 
 class NCM(nn.Module):
-    def __init__(self, args, query_size, doc_size):
+    def __init__(self, args, query_size, doc_size, input_size):
         super(NCM, self).__init__()
         self.args = args
 
@@ -17,35 +17,21 @@ class NCM(nn.Module):
         self.logger = logging.getLogger("NCM")
 
         # Config setting
+        self.input_size = input_size
         self.hidden_size = args.hidden_size
         self.dropout_rate = args.dropout_rate
         self.query_size = query_size
         self.doc_size = doc_size
-
-        # create embeddings
-        if self.args.embed_type == 'QD+Q+D':
-            query_embedding_QDQ = torch.load('data/embedding/query_embedding_QDQ.embed')
-            self.query_embedding = nn.Embedding(query_embedding_QDQ.size(0), query_embedding_QDQ.size(1))
-            self.query_embedding.weight.data.copy_(query_embedding_QDQ)
-            doc_embedding_QDQD = torch.load('data/embedding/doc_embedding_QDQD.embed')
-            self.doc_embedding = nn.Embedding(doc_embedding_QDQD.size(0), doc_embedding_QDQD.size(1))
-            self.doc_embedding.weight.data.copy_(doc_embedding_QDQD)
-        elif self.args.embed_type == 'random':
-            # use random embedding
-            self.query_embedding = nn.Embedding(query_size, self.embed_size)
-            self.doc_embedding = nn.Embedding(doc_size, self.embed_size)
-        else:
-            raise NotImplementedError('Unsupported embed_type: {}'.format(self.args.embed_type))
         
         # create network components
         if self.args.model_type.lower() == 'rnn':
-            self.rnn = nn.RNN(input_size=1 + self.doc_embedding.weight.data.size(1),
+            self.rnn = nn.RNN(input_size=self.input_size,
                               hidden_size=self.hidden_size,
                               nonlinearity='relu',
                               dropout=self.dropout_rate)
             # print(self.rnn)
         elif self.args.model_type.lower() == 'lstm':
-            self.lstm = nn.LSTM(input_size=1 + self.doc_embedding.weight.data.size(1) + self.query_embedding.weight.data.size(1), 
+            self.lstm = nn.LSTM(input_size=self.input_size, 
                                 hidden_size=self.hidden_size,
                                 dropout=self.dropout_rate)
             # print(self.lstm)
@@ -54,13 +40,10 @@ class NCM(nn.Module):
         self.output_linear = nn.Linear(self.hidden_size, 1)
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, query, doc, clicks):
-        assert self.args.batch_size == query.size(0)
-        batch_size = self.args.batch_size
-        max_doc_num = doc.size(1)
-
-        query_embed = self.query_embedding(query)  # [batch_size, 1, query_embed_size]
-        doc_embed = self.doc_embedding(doc)  # [batch_size, 10, doc_embed_size]
+    def forward(self, query_embed, doc_embed, clicks):
+        # assert self.args.batch_size == query.size(0)
+        batch_size = query_embed.size(0)
+        max_doc_num = doc_embed.size(1)
         clicks = clicks.view(batch_size, -1, 1).float() # [batch_size, 10, 1]
 
         # print('query_embed: {}\n{}\n'.format(query_embed.size(), query_embed))
