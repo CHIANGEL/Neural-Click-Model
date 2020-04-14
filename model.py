@@ -21,9 +21,9 @@ use_cuda = torch.cuda.is_available()
 MINF = 1e-30
 
 class Model(object):
-    """
+    '''
      Model class performs as an interface layer for NCM model.
-    """
+    '''
     def __init__(self, args, query_size, doc_size):
         self.args = args
 
@@ -76,9 +76,9 @@ class Model(object):
         get_gpu_infos()
        
     def create_train_optim(self):
-        """
+        '''
          Create the optimizer according to the args
-        """
+        '''
         if self.optim_type == 'adagrad':
             optimizer = torch.optim.Adagrad(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
         elif self.optim_type == 'adadelta':
@@ -101,9 +101,9 @@ class Model(object):
             param_group['lr'] = param_group['lr'] * decay_rate
 
     def compute_loss(self, pred_scores, target_scores):
-        """
+        '''
          Compute the loss function
-        """
+        '''
         total_loss = 0.
         loss_list = []
         cnt = 0
@@ -121,9 +121,9 @@ class Model(object):
         return total_loss, loss_list
 
     def _train_epoch(self, train_batches, data, min_eval_loss, patience, step_pbar):
-        """
+        '''
          Train the model for a single epoch.
-        """
+        '''
         evaluate = True
         exit_tag = False
         num_steps = self.args.num_steps
@@ -158,7 +158,7 @@ class Model(object):
 
             if evaluate and self.global_step % self.eval_freq == 0:
                 if data.dev_set is not None:
-                    eval_batches = data.gen_mini_batches('dev', batch_size, shuffle=False)
+                    eval_batches = data.gen_mini_batches('dev', 1, shuffle=False)
                     eval_loss = self.evaluate(eval_batches, data, 
                                               result_dir=self.args.result_dir,
                                               result_prefix='train_dev.predicted.{}.{}'.format(self.args.algo, self.global_step), 
@@ -243,18 +243,86 @@ class Model(object):
             ave_span_loss = 1.0 * total_loss / total_num
         return ave_span_loss
 
+    def log_likelihood(self, test_batches, dataset):
+        '''
+         Compute the log likelihood on test set
+        '''
+        loglikelihood, total_num = 0.0, 0
+        with torch.no_grad():
+            for b_itx, batch in enumerate(test_batches):
+                QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
+                UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
+                CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:, 0: -1])
+                tmp = torch.zeros(CLICKS.size(0), 1).long()
+                CLICKS = torch.cat((tmp, CLICKS), 1) # CLICKS stands for interaction representation in NCM paper
+
+                query_embed = self.query_embedding(QIDS)  # [batch_size, 1, query_embed_size]
+                doc_embed = self.doc_embedding(UIDS)  # [batch_size, 10, doc_embed_size]
+                if use_cuda:
+                    query_embed, doc_embed, CLICKS = query_embed.cuda(), doc_embed.cuda(), CLICKS.cuda()
+
+                self.model.eval()
+                pred_logits = self.model(query_embed, doc_embed, CLICKS)
+                print('pred_logits: ({},{})\n{}\n'.format(len(pred_logits), len(pred_logits[0]), pred_logits))
+
+                # start computing log likelihood per query
+                for batch_idx, scores in enumerate(batch['clicks']):
+                    for position_idx, score in enumerate(scores):
+                        total_num += 1
+                        if score == 0:
+                            loglikelihood += torch.log(1. - pred_logits[batch_idx][position_idx].view(1) + MINF)
+                        else:
+                            loglikelihood += torch.log(pred_logits[batch_idx][position_idx].view(1) + MINF)
+            loglikelihood /= total_num
+        return loglikelihood
+    
+    def perplexity(self, test_batches, dataset):
+        '''
+         Compute the perplexity on test set
+        '''
+        perplexity_at_rank = [0.0] * 10 # 10 docs per query
+        total_num = 0
+        with torch.no_grad():
+            for b_itx, batch in enumerate(test_batches):
+                QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
+                UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
+                CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:, 0: -1])
+                tmp = torch.zeros(CLICKS.size(0), 1).long()
+                CLICKS = torch.cat((tmp, CLICKS), 1) # CLICKS stands for interaction representation in NCM paper
+
+                query_embed = self.query_embedding(QIDS)  # [batch_size, 1, query_embed_size]
+                doc_embed = self.doc_embedding(UIDS)  # [batch_size, 10, doc_embed_size]
+                if use_cuda:
+                    query_embed, doc_embed, CLICKS = query_embed.cuda(), doc_embed.cuda(), CLICKS.cuda()
+
+                self.model.eval()
+                pred_logits = self.model(query_embed, doc_embed, CLICKS)
+                print('pred_logits: ({},{})\n{}\n'.format(len(pred_logits), len(pred_logits[0]), pred_logits))
+
+                # start computing perplexity
+                for batch_idx, scores in enumerate(batch['clicks']):
+                    total_num += 1
+                    for position_idx, score in enumerate(scores):
+                        if score == 0:
+                            perplexity_at_rank[position_idx] += torch.log2(1. - pred_logits[batch_idx][position_idx].view(1) + MINF)
+                        else:
+                            perplexity_at_rank[position_idx] += torch.log2(pred_logits[batch_idx][position_idx].view(1) + MINF)
+            perplexity_at_rank = [2 ** (-x / total_num) for x in perplexity_at_rank]
+            perplexity = sum(perplexity_at_rank) / len(perplexity_at_rank)
+        return perplexity, perplexity_at_rank
+
     def save_model(self, model_dir, model_prefix):
-        """
+        '''
          Save the NCM model and optimizer into model_dir with model_prefix as the model indicator
-        """
+        '''
         torch.save(self.model.state_dict(), os.path.join(model_dir, model_prefix+'_{}.model'.format(self.global_step)))
         torch.save(self.optimizer.state_dict(), os.path.join(model_dir, model_prefix + '_{}.optimizer'.format(self.global_step)))
         self.logger.info('Model and optimizer saved in {}, with prefix {} and global step {}.'.format(model_dir, model_prefix, self.global_step))
 
     def load_model(self, model_dir, model_prefix, global_step):
-        """
+        '''
          Load the NCM model and optimizer from model_dir with model_prefix as the model indicator
-        """
+        '''
         # Load the optimizer
         optimizer_path = os.path.join(model_dir, model_prefix + '_{}.optimizer'.format(global_step))
         if not os.path.isfile(optimizer_path):

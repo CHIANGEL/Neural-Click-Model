@@ -160,8 +160,10 @@ class Dataset(object):
             data = self.train_set
         elif set_name == 'dev':
             data = self.dev_set
+            assert batch_size == 1
         elif set_name == 'test':
             data = self.test_set
+            assert batch_size == 1
         else:
             raise NotImplementedError('No data set named as {}'.format(set_name))
         data_size = len(data)
@@ -171,8 +173,8 @@ class Dataset(object):
         indices = indices.tolist()
         # Because batch_size % gpu_num == 0
         # So that len(data) % batch_size == 0  <=> len(data) % gpu_num == 0
-        indices += indices[0: (self.args.batch_size - data_size % self.args.batch_size) % self.args.batch_size]
-        assert len(indices) % self.args.batch_size == 0
+        indices += indices[0: (batch_size - data_size % batch_size) % batch_size]
+        assert len(indices) % batch_size == 0
         for batch_start in np.arange(0, len(list(indices)), batch_size):
             batch_indices = indices[batch_start: batch_start + batch_size]
             yield self._one_mini_batch(data, batch_indices)

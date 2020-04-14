@@ -159,9 +159,9 @@ def evaluate(args):
 
     # Start evaluation
     logger.info('Evaluating the model on dev set...')
-    dev_batches = dataset.gen_mini_batches('dev', args.batch_size, shuffle=False)
+    dev_batches = dataset.gen_mini_batches('dev', 1, shuffle=False)
     dev_loss = model.evaluate(dev_batches, dataset, result_dir=args.result_dir,
-                              result_prefix='evaluate.dev.predicted.{}.{}.{}'.format(args.algo, args.load_model, time.strftime("%m-%d %H:%M:%S", time.localtime())))
+                              result_prefix='dev.{}.{}.{}'.format(args.algo, args.load_model, time.strftime("%m-%d %H:%M:%S", time.localtime())))
     logger.info('Loss on dev set: {}'.format(dev_loss))
     logger.info('Predicted results are saved to {}'.format(os.path.join(args.result_dir)))
     logger.info('Done with model evaluation!')
@@ -175,13 +175,13 @@ def predict(args):
 
     # Check the data files
     logger.info('Checking the data files...')
-    for data_path in args.test_files:
+    for data_path in args.test_dirs:
         assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
-    assert len(args.test_files) > 0, 'No test files are provided.'
+    assert len(args.test_dirs) > 0, 'No test files are provided.'
 
     # Load dataset
     logger.info("Loading the dataset...")
-    dataset = Dataset(args, test_files=args.test_files)
+    dataset = Dataset(args, test_dirs=args.test_dirs)
 
     # Model Construction
     logger.info('Constructing the model...')
@@ -189,27 +189,30 @@ def predict(args):
 
     # Restore the pre-trained model
     logger.info('Restoring the pre-trained model...')
-    assert args.load_model > -1, 'args.load_model should be set at evaluation period!' # make sure there is something to store at evaluation
+    assert args.load_model > -1, 'args.load_model should be set at prediction period!' # make sure there is something to store at evaluation
     model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
     logger.info('Start prediction at model.global_step: {}'.format(model.global_step))
 
-    # Start prediction
-    logger.info('Predicting the model on test set...')
-    dev_batches = dataset.gen_mini_batches('test', args.batch_size, shuffle=False)
-    dev_loss = model.evaluate(dev_batches, dataset, result_dir=args.result_dir,
-                              result_prefix='evaluate.dev.predicted.{}.{}.{}'.format(args.algo, args.load_model, time.strftime("%m-%d %H:%M:%S", time.localtime())))
-    logger.info('Loss on dev set: {}'.format(dev_loss))
+    # Compute test loss
+    logger.info('Predicting answers on test set...')
+    test_batches = dataset.gen_mini_batches('test', 1, shuffle=False)
+    test_loss = model.evaluate(test_batches, dataset, result_dir=args.result_dir,
+                               result_prefix='test.{}.{}.{}'.format(args.algo, args.load_model, time.strftime("%m-%d %H:%M:%S", time.localtime())))
     logger.info('Predicted results are saved to {}'.format(os.path.join(args.result_dir)))
-    logger.info('Done with model evaluation!')
+    logger.info('Loss on test set: {}'.format(test_loss))
 
+    # Compute log likelihood
+    logger.info('Computing log likelihood on test set...')
+    test_batches = dataset.gen_mini_batches('test', 1, shuffle=False)
+    loglikelihood = model.log_likelihood(test_batches, dataset)
+    logger.info('Log likelihood on test set: {}'.format(loglikelihood))
 
-    logger.info('Predicting answers for test set...')
-    test_batches = dataset.gen_mini_batches('test', args.batch_size,
-                                             pad_id=vocab.get_id(vocab.pad_token),
-                                             shuffle=False)
-    model.evaluate(test_batches, dataset,
-                     result_dir=args.result_dir,
-                     result_prefix='test.predicted.{}.{}.{}'.format(args.algo, args.load_model, time.time()))
+   #  Compute perplexity
+    logger.info('Computing perplexity on test set...')
+    test_batches = dataset.gen_mini_batches('test', 1, shuffle=False)
+    perplexity = model.perplexity(test_batches, dataset)
+    logger.info('Perplexity on test set: {}'.format(perplexity))
+
 
 def run():
     '''
