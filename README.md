@@ -14,3 +14,5 @@ LSTM + QD+Q+D
 First use scripts in scripts_for_dataset to generate useful data files from xml files.
 
 Then run the NCM model to train & test
+
+In dev & test period, batch_size must be 1. Otherwise there are paddings in data batches, leading to repeated computation of some samples.
