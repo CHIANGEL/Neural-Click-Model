@@ -14,7 +14,7 @@ from dataset import Dataset
 def parse_args():
     parser = argparse.ArgumentParser('NCM')
 
-    parser.add_argument('--dataset', default='Yandex',
+    parser.add_argument('--dataset', default='TianGong-ST',
                         help='name of the dataset')
     parser.add_argument('--train', action='store_true',
                         help='train the model')
@@ -75,21 +75,21 @@ def parse_args():
 
     path_settings = parser.add_argument_group('path settings')
     path_settings.add_argument('--train_dirs', nargs='+',
-                               default=['data/Yandex/train_per_query.txt'],
+                               default=['data/TianGong-ST/train_per_query.txt'],
                                help='list of dirs that contain the preprocessed train data')
     path_settings.add_argument('--dev_dirs', nargs='+',
-                               default=['data/Yandex/dev_per_query.txt'],
+                               default=['data/TianGong-ST/dev_per_query.txt'],
                                help='list of dirs that contain the preprocessed dev data')
     path_settings.add_argument('--test_dirs', nargs='+',
-                               default=['data/Yandex/test_per_query.txt'],
+                               default=['data/TianGong-ST/test_per_query.txt'],
                                help='list of dirs that contain the preprocessed test data')
-    path_settings.add_argument('--model_dir', default='./outputs/models/',
+    path_settings.add_argument('--model_dir', default='./outputs/TianGong-ST/models/',
                                help='the dir to store models')
-    path_settings.add_argument('--result_dir', default='./outputs/results/',
+    path_settings.add_argument('--result_dir', default='./outputs/TianGong-ST/results/',
                                help='the dir to output the results')
-    path_settings.add_argument('--summary_dir', default='./outputs/summary/',
+    path_settings.add_argument('--summary_dir', default='./outputs/TianGong-ST/summary/',
                                help='the dir to write tensorboard summary')
-    path_settings.add_argument('--log_dir', default='./outputs/logs/',
+    path_settings.add_argument('--log_dir', default='./outputs/TianGong-ST/logs/',
                                help='path of the log file')
     path_settings.add_argument('--load_model', type=int, default=-1,
                                help='load model global step')
