@@ -87,8 +87,8 @@ def generate_dict_list(args):
     # save and check infos_per_session
     print('  - {}'.format('save and check infos_per_session...'))
     print('    - {}'.format('length of infos_per_session: {}'.format(len(infos_per_session))))
-    save_list('data/Yandex/', 'infos_per_session.list', infos_per_session)
-    list1 = load_list('data/Yandex/', 'infos_per_session.list')
+    save_list('../data/Yandex/', 'infos_per_session.list', infos_per_session)
+    list1 = load_list('../data/Yandex/', 'infos_per_session.list')
     assert len(infos_per_session) == len(list1)
     for idx, item in enumerate(infos_per_session):
         assert item == list1[idx]
@@ -96,8 +96,8 @@ def generate_dict_list(args):
     # save and check infos_per_query
     print('  - {}'.format('save and check infos_per_query...'))
     print('    - {}'.format('length of infos_per_query: {}'.format(len(infos_per_query))))
-    save_list('data/Yandex/', 'infos_per_query.list', infos_per_query)
-    list2 = load_list('data/Yandex/', 'infos_per_query.list')
+    save_list('../data/Yandex/', 'infos_per_query.list', infos_per_query)
+    list2 = load_list('../data/Yandex/', 'infos_per_query.list')
     assert len(infos_per_query) == len(list2)
     for idx, item in enumerate(infos_per_query):
         assert item == list2[idx]
@@ -106,10 +106,10 @@ def generate_dict_list(args):
     print('  - {}'.format('save and check query_qid, url_uid...'))
     print('    - {}'.format('unique query number: {}'.format(len(query_qid))))
     print('    - {}'.format('unique doc number: {}'.format(len(url_uid))))
-    save_dict('data/Yandex/', 'query_qid.dict', query_qid)
-    save_dict('data/Yandex/', 'url_uid.dict', url_uid)
-    dict1 = load_dict('data/Yandex', 'query_qid.dict')
-    dict2 = load_dict('data/Yandex', 'url_uid.dict')
+    save_dict('../data/Yandex/', 'query_qid.dict', query_qid)
+    save_dict('../data/Yandex/', 'url_uid.dict', url_uid)
+    dict1 = load_dict('../data/Yandex', 'query_qid.dict')
+    dict2 = load_dict('../data/Yandex', 'url_uid.dict')
     assert len(query_qid) == len(dict1)
     assert len(url_uid) == len(dict2)
     for key in query_qid:
@@ -124,12 +124,12 @@ def generate_dict_list(args):
 def generate_data_txt(args):
     # load query_qid & url_uid
     print('  - {}'.format('loading query_qid & url_uid...'))
-    query_qid = load_dict('data/Yandex', 'query_qid.dict')
-    url_uid = load_dict('data/Yandex', 'url_uid.dict')
+    query_qid = load_dict('../data/Yandex', 'query_qid.dict')
+    url_uid = load_dict('../data/Yandex', 'url_uid.dict')
 
     # write train.txt & dev.txt & test.txt per session
     print('  - {}'.format('generating train & dev & test data per session...'))
-    infos_per_session = load_list('data/Yandex/', 'infos_per_session.list')
+    infos_per_session = load_list('../data/Yandex/', 'infos_per_session.list')
     # Separate all sessions into train : dev : test
     session_num = len(infos_per_session)
     train_dev_split = int(session_num * args.trainset_ratio)
@@ -146,16 +146,16 @@ def generate_data_txt(args):
     print('    - {}'.format('total sessions: {}'.format(session_num)))
     indices = np.arange(0, session_num)
     # np.random.shuffle(indices)
-    print('    - {}'.format('writing into data/Yandex/train_per_session.txt'))
-    generate_data_per_session(infos_per_session, indices[:train_dev_split], 'data/Yandex/', 'train_per_session.txt')
-    print('    - {}'.format('writing into data/Yandex/dev_per_session.txt'))
-    generate_data_per_session(infos_per_session, indices[train_dev_split:dev_test_split], 'data/Yandex/', 'dev_per_session.txt')
-    print('    - {}'.format('writing into data/Yandex/test_per_session.txt'))
-    generate_data_per_session(infos_per_session, indices[dev_test_split:], 'data/Yandex/', 'test_per_session.txt')
+    print('    - {}'.format('writing into ../data/Yandex/train_per_session.txt'))
+    generate_data_per_session(infos_per_session, indices[:train_dev_split], '../data/Yandex/', 'train_per_session.txt')
+    print('    - {}'.format('writing into ../data/Yandex/dev_per_session.txt'))
+    generate_data_per_session(infos_per_session, indices[train_dev_split:dev_test_split], '../data/Yandex/', 'dev_per_session.txt')
+    print('    - {}'.format('writing into ../data/Yandex/test_per_session.txt'))
+    generate_data_per_session(infos_per_session, indices[dev_test_split:], '../data/Yandex/', 'test_per_session.txt')
 
     # write train.txt & dev.txt & test.txt per query
     print('  - {}'.format('generating train & dev & test data per query...'))
-    infos_per_query = load_list('data/Yandex/', 'infos_per_query.list')
+    infos_per_query = load_list('../data/Yandex/', 'infos_per_query.list')
     # Separate all queries into train : dev : test
     query_num = len(infos_per_query)
     train_dev_split = int(query_num * args.trainset_ratio)
@@ -169,26 +169,26 @@ def generate_data_txt(args):
     print('    - {}'.format('total queries: {}'.format(query_num)))
     indices = np.arange(0, query_num)
     # np.random.shuffle(indices)
-    print('    - {}'.format('writing into data/Yandex/train_per_query.txt'))
-    generate_data_per_query(infos_per_query, indices[0:train_dev_split], 'data/Yandex/', 'train_per_query.txt')
-    print('    - {}'.format('writing into data/Yandex/dev_per_query.txt'))
-    generate_data_per_query(infos_per_query, indices[train_dev_split:dev_test_split], 'data/Yandex/', 'dev_per_query.txt')
+    print('    - {}'.format('writing into ../data/Yandex/train_per_query.txt'))
+    generate_data_per_query(infos_per_query, indices[0:train_dev_split], '../data/Yandex/', 'train_per_query.txt')
+    print('    - {}'.format('writing into ../data/Yandex/dev_per_query.txt'))
+    generate_data_per_query(infos_per_query, indices[train_dev_split:dev_test_split], '../data/Yandex/', 'dev_per_query.txt')
     print('    - {}'.format('writing into data/Yandex/test_per_query.txt'))
-    generate_data_per_query(infos_per_query, indices[dev_test_split:], 'data/Yandex/', 'test_per_query.txt')
+    generate_data_per_query(infos_per_query, indices[dev_test_split:], '../data/Yandex/', 'test_per_query.txt')
 
     print('  - {}'.format('Done'))
 
 def generate_embedding(args):
     # load query_qid & url_uid
     print('  - {}'.format('loading query_qid & url_uid...'))
-    query_qid = load_dict('data/Yandex', 'query_qid.dict')
-    url_uid = load_dict('data/Yandex', 'url_uid.dict')
+    query_qid = load_dict('../data/Yandex', 'query_qid.dict')
+    url_uid = load_dict('../data/Yandex', 'url_uid.dict')
     unique_query_num = len(query_qid)
     unique_doc_num = len(url_uid)
 
     # load infos_per_query
     print('  - {}'.format('loading infos_per_query...'))
-    infos_per_query = load_list('data/Yandex/', 'infos_per_query.list')
+    infos_per_query = load_list('../data/Yandex/', 'infos_per_query.list')
     print('    - {}'.format('total query number: {}'.format(len(infos_per_query))))
     print('    - {}'.format('unique query number: {}'.format(unique_query_num)))
     print('    - {}'.format('unique doc number: {}'.format(unique_doc_num)))
@@ -209,7 +209,7 @@ def generate_embedding(args):
             click_offset = click_offset * 2 + click
         query_embedding_QDQD[qid][click_offset] += 1
     assert query_embedding_QDQD.sum() == len(infos_per_query)
-    torch.save(query_embedding_QDQD, 'data/Yandex/query_embedding.emb')
+    torch.save(query_embedding_QDQD, '../data/Yandex/query_embedding.emb')
     
     # generate doc embeddings under rule QD+Q+D
     print('    - {}'.format('generate doc embeddings'))
@@ -231,11 +231,11 @@ def generate_embedding(args):
             rank_offset = rank - 1  # rank start from 1, not 0
             doc_embedding_QDQD[uid][rank_offset * 1024 + click_offset] += 1
     assert doc_embedding_QDQD.sum() == len(infos_per_query * 10)
-    torch.save(doc_embedding_QDQD, 'data/Yandex/doc_embedding.emb')
+    torch.save(doc_embedding_QDQD, '../data/Yandex/doc_embedding.emb')
 
 def main():
     parser = argparse.ArgumentParser('YandexRelPredChallenge')
-    parser.add_argument('--dataset', default='../dataset/YandexRelPredChallenge/YandexRelPredChallenge',
+    parser.add_argument('--dataset', default='../../dataset/YandexRelPredChallenge/YandexRelPredChallenge',
                         help='dataset path')
     parser.add_argument('--dict_list', action='store_true',
                         help='generate dicts and lists for info_per_session/info_per_query')
