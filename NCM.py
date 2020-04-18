@@ -22,6 +22,7 @@ class NCM(nn.Module):
         self.dropout_rate = args.dropout_rate
         self.query_size = query_size
         self.doc_size = doc_size
+        self.best_eval_loss = 2333
         
         # create network components
         if self.args.model_type.lower() == 'rnn':

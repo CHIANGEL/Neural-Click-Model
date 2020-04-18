@@ -57,7 +57,7 @@ class Model(object):
             raise NotImplementedError('Unsupported embed_type: {}'.format(self.args.embed_type))
         
         # create the NCM model instance
-        get_gpu_infos()
+        # get_gpu_infos()
         if self.args.model_type.lower() == 'rnn':
             input_size = 1 + self.doc_embedding.weight.data.size(1),
         elif self.args.model_type.lower() == 'lstm':
@@ -73,7 +73,7 @@ class Model(object):
             self.model = nn.DataParallel(self.model)
         para = sum([np.prod(list(p.size())) for p in self.model.parameters()])
         self.logger.info('Model {} : params: {:4f}M'.format(self.model._get_name(), para * 4 / 1000 / 1000))
-        get_gpu_infos()
+        # get_gpu_infos()
        
     def create_train_optim(self):
         '''
@@ -164,6 +164,10 @@ class Model(object):
                                               result_prefix='train_dev.predicted.{}.{}'.format(self.args.algo, self.global_step), 
                                               t=-1)
                     self.writer.add_scalar("dev/loss", eval_loss, self.global_step)
+                    if eval_loss < self.model.best_eval_loss:
+                        self.logger.info('Better model found in dev on global step: {}'.format(self.global_step))
+                        self.model.best_eval_loss = eval_loss
+                        self.save_model(save_dir, 'Best')
 
                     if eval_loss < min_eval_loss:
                         min_eval_loss = eval_loss
@@ -191,7 +195,7 @@ class Model(object):
         '''
          Training of the model starts here.
         '''
-        epoch, patience, min_eval_loss = 0, 0, 1e10
+        epoch, patience, min_eval_loss = 0., 0, 1e10
         step_pbar = tqdm(total=self.args.num_steps)
         exit_tag = False
         self.writer.add_scalar('train/lr', self.learning_rate, self.global_step)
