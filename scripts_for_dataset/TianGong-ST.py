@@ -358,6 +358,40 @@ def generate_data_for_pyclick(args):
     print('    - {}'.format('{} interactions in data for Pyclick'.format(interaction_count)))
     pyclick_data_writer.close()
 
+def transfer_human_labels(args):
+    # open human_labels.txt
+    label_reader = open(os.path.join(args.input + '../human_label/', 'sogou_st_human_labels.txt'), 'r')
+    label_writer = open(os.path.join(args.output, 'human_label.txt'), 'w')
+
+    # load session_sid & query_qid & url_uid
+    print('  - {}'.format('loading query_qid & url_uid...'))
+    session_sid = load_dict(args.output, 'session_sid.dict')
+    query_qid = load_dict(args.output, 'query_qid.dict')
+    url_uid = load_dict(args.output, 'url_uid.dict')
+    unique_session_num = len(session_sid)
+    unique_query_num = len(query_qid)
+    unique_doc_num = len(url_uid)
+
+    # start transferring
+    read_line_count = 0
+    print('  - {}'.format('start reading from human_label.txt...'))
+    lines = label_reader.readlines()
+    print('  - {}'.format('read {} lines'.format(len(lines))))
+    print('  - {}'.format('start transferring...'))
+    for line in lines:
+        # there is a mixture of separators: ' ' & '\t'
+        line_entry = [str(i) for i in line.strip().split()]
+        read_line_count += 1
+        # print(line_entry)
+        line_entry[1] = str(session_sid[int(line_entry[1])])
+        line_entry[2] = str(query_qid[line_entry[2]])
+        line_entry[3] = str(url_uid[line_entry[3]])
+        line_entry.append('\n')
+        label_writer.write('\t'.join(line_entry))
+    label_reader.close()
+    label_writer.close()
+    print('  - {}'.format('finish reading from human_label.txt...'))
+
 def main():
     parser = argparse.ArgumentParser('TianGong-ST')
     parser.add_argument('--dataset', default='sogousessiontrack2018.xml',
@@ -380,6 +414,8 @@ def main():
                         help='ratio of the dev session/query according to the total number of sessions/queries')
     parser.add_argument('--pyclick', action='store_true',
                         help='generate data files for repo Pyclick')
+    parser.add_argument('--human_label', action='store_true',
+                        help='transfer query & doc in human_labels.txt into qid and uid')
     args = parser.parse_args()
     if args.xml_clean:
         # remove useless lines in xml files, to reduce the size of xml file
@@ -401,6 +437,10 @@ def main():
         # generate data files for repo Pyclick
         print('===> {}'.format('generating data files for repo Pyclick...'))
         generate_data_for_pyclick(args)
+    if args.human_label:
+        # transfer query & doc in human_labels.txt into qid and uid
+        print('===> {}'.format('transferring human_label.txt...'))
+        transfer_human_labels(args)
     print('===> {}'.format('Done.'))
     
 if __name__ == '__main__':
