@@ -314,6 +314,9 @@ class Model(object):
             perplexity_at_rank = [2 ** (-x / total_num) for x in perplexity_at_rank]
             perplexity = sum(perplexity_at_rank) / len(perplexity_at_rank)
         return perplexity, perplexity_at_rank
+    
+    def predict_relevance(qid, uid):
+        pass
 
     def save_model(self, model_dir, model_prefix):
         '''

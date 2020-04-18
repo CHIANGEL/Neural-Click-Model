@@ -20,8 +20,8 @@ def parse_args():
                         help='train the model')
     parser.add_argument('--evaluate', action='store_true',
                         help='evaluate the model on dev set')
-    parser.add_argument('--predict', action='store_true',
-                        help='predict the answers for test set with trained model')
+    parser.add_argument('--test', action='store_true',
+                        help='test the model for test set with trained model')
     parser.add_argument('--rank', action='store_true',
                         help='rank on train set')
     parser.add_argument('--gpu', type=str, default='',
@@ -166,7 +166,7 @@ def evaluate(args):
     logger.info('Predicted results are saved to {}'.format(os.path.join(args.result_dir)))
     logger.info('Done with model evaluation!')
 
-def predict(args):
+def test(args):
     """
      Predict answers for test files
     """
@@ -190,8 +190,8 @@ def predict(args):
     # Restore the pre-trained model
     logger.info('Restoring the pre-trained model...')
     assert args.load_model > -1, 'args.load_model should be set at prediction period!' # make sure there is something to store at evaluation
-    model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
-    logger.info('Start prediction at model.global_step: {}'.format(model.global_step))
+    model.load_model(model_dir=args.model_dir, model_prefix='Best', global_step=args.load_model)
+    logger.info('Start testing at model.global_step: {}'.format(model.global_step))
 
     # Compute test loss
     logger.info('Predicting answers on test set...')
@@ -207,12 +207,18 @@ def predict(args):
     loglikelihood = model.log_likelihood(test_batches, dataset)
     logger.info('Log likelihood on test set: {}'.format(loglikelihood))
 
-   #  Compute perplexity
+    # Compute perplexity
     logger.info('Computing perplexity on test set...')
     test_batches = dataset.gen_mini_batches('test', 1, shuffle=False)
-    perplexity = model.perplexity(test_batches, dataset)
+    perplexity, perplexity_at_rank = model.perplexity(test_batches, dataset)
     logger.info('Perplexity on test set: {}'.format(perplexity))
+    logger.info('Perplexity at rank: {}'.format(perplexity_at_rank))
 
+    # Compute NDCG@k
+    trunc_levels = [1, 3, 5, 10]
+    for trunc_level in trunc_levels:
+        NDCG = RelevanceEstimation.evaluate(click_model, relevance_sessions, k)
+        logger.info("NDCG@%d: %f".format(trunc_level, NDCG))
 
 def run():
     '''
@@ -245,8 +251,8 @@ def run():
         train(args)
     if args.evaluate:
         evaluate(args)
-    if args.predict:
-        predict(args)
+    if args.test:
+        test(args)
     if args.rank:
         rank(args)
     logger.info('Run done.')

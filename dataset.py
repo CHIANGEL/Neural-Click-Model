@@ -16,7 +16,7 @@ class Dataset(object):
     """
     def __init__(self, args, train_dirs=[], dev_dirs=[], test_dirs=[], isRank=False):
         # config settings
-        self.logger = logging.getLogger("neural_click_model")
+        self.logger = logging.getLogger("NCM")
         self.max_doc_num = args.max_doc_num
         self.gpu_num = args.gpu_num
         self.args = args
@@ -27,7 +27,6 @@ class Dataset(object):
         # load pre-proccessed dicts & lists
         self.query_qid = load_dict('data/' + args.dataset, 'query_qid.dict')
         self.url_uid = load_dict('data/' + args.dataset, 'url_uid.dict')
-        self.infos_per_query = load_list('data/' + args.dataset, 'infos_per_query.list')
 
         # load train & dev & test data
         self.train_set, self.dev_set, self.test_set = [], [], []
@@ -47,14 +46,17 @@ class Dataset(object):
         else:
             if train_dirs:
                 for train_dir in train_dirs:
+                    self.logger.info('Train path: {}'.format(train_dir))
                     self.train_set += self.load_dataset(train_dir, num=self.num_train_files, mode='train')
                 self.logger.info('Train set size: {} queries.'.format(len(self.train_set)))
             if dev_dirs:
                 for dev_dir in dev_dirs:
+                    self.logger.info('Dev path: {}'.format(dev_dir))
                     self.dev_set += self.load_dataset(dev_dir, num=self.num_dev_files, mode='dev')
                 self.logger.info('Dev set size: {} queries.'.format(len(self.dev_set)))
             if test_dirs:
                 for test_dir in test_dirs:
+                    self.logger.info('Test path: {}'.format(test_dir))
                     self.test_set += self.load_dataset(test_dir, num=self.num_test_files, mode='test')
                 self.logger.info('Test set size: {} queries.'.format(len(self.test_set)))
 
