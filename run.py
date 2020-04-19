@@ -219,12 +219,13 @@ def test(args):
     logger.info('Perplexity at rank: {}'.format(perplexity_at_rank))
     
     # Compute NDCG@k
-    relevance_queries, true_relevances = TianGong_HumanLabel_Parser.TianGong_HumanLabel_Parser().parse(args.relevance_dir)
-    relevance_estimatior = RelevanceEstimator(true_relevances, 1)
-    trunc_levels = [1, 3, 5, 10]
-    for trunc_level in trunc_levels:
-        ndcg = relevance_estimatior.evaluate(model, relevance_queries, trunc_level)
-        logger.info("NDCG@{}: {}".format(trunc_level, ndcg))
+    if args.dataset == 'TianGong-ST':
+        relevance_queries, true_relevances = TianGong_HumanLabel_Parser.TianGong_HumanLabel_Parser().parse(args.relevance_dir)
+        relevance_estimatior = RelevanceEstimator(true_relevances, 1)
+        trunc_levels = [1, 3, 5, 10]
+        for trunc_level in trunc_levels:
+            ndcg = relevance_estimatior.evaluate(model, relevance_queries, trunc_level)
+            logger.info("NDCG@{}: {}".format(trunc_level, ndcg))
 
 def run():
     '''
