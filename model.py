@@ -267,7 +267,7 @@ class Model(object):
 
                 self.model.eval()
                 pred_logits = self.model(query_embed, doc_embed, CLICKS)
-                print('pred_logits: ({},{})\n{}\n'.format(len(pred_logits), len(pred_logits[0]), pred_logits))
+                # print('pred_logits: ({},{})\n{}\n'.format(len(pred_logits), len(pred_logits[0]), pred_logits))
 
                 # start computing log likelihood per query
                 for batch_idx, scores in enumerate(batch['clicks']):
@@ -301,7 +301,7 @@ class Model(object):
 
                 self.model.eval()
                 pred_logits = self.model(query_embed, doc_embed, CLICKS)
-                print('pred_logits: ({},{})\n{}\n'.format(len(pred_logits), len(pred_logits[0]), pred_logits))
+                # print('pred_logits: ({},{})\n{}\n'.format(len(pred_logits), len(pred_logits[0]), pred_logits))
 
                 # start computing perplexity
                 for batch_idx, scores in enumerate(batch['clicks']):
@@ -315,8 +315,25 @@ class Model(object):
             perplexity = sum(perplexity_at_rank) / len(perplexity_at_rank)
         return perplexity, perplexity_at_rank
     
-    def predict_relevance(qid, uid):
-        pass
+    def predict_relevance(self, qid, uid):
+        loglikelihood, total_num = 0.0, 0
+        with torch.no_grad():
+            QIDS = Variable(torch.from_numpy(np.array(qid, dtype=np.int64)))
+            UIDS = Variable(torch.from_numpy(np.array(uid, dtype=np.int64)))
+            CLICKS = torch.zeros(1, 1).long()
+            
+            query_embed = self.query_embedding(QIDS).view(1, 1, -1)  # [1, 1, query_embed_size]
+            doc_embed = self.doc_embedding(UIDS).view(1, 1, -1)  # [1, 1, doc_embed_size]
+            if use_cuda:
+                query_embed, doc_embed, CLICKS = query_embed.cuda(), doc_embed.cuda(), CLICKS.cuda()
+            # print('query_embed: {}\n{}\n'.format(query_embed.size(), query_embed))
+            # print('doc_embed: {}\n{}\n'.format(doc_embed.size(), doc_embed))
+            # print('CLICKS: {}\n{}\n'.format(CLICKS.size(), CLICKS))
+
+            self.model.eval()
+            pred_logits = self.model(query_embed, doc_embed, CLICKS)
+            # print('pred_logits: ({},{})\n{}\n'.format(len(pred_logits), len(pred_logits[0]), pred_logits))
+        return pred_logits[0][0]
 
     def save_model(self, model_dir, model_prefix):
         '''

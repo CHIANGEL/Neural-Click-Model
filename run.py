@@ -10,6 +10,8 @@ import pprint
 
 from model import Model
 from dataset import Dataset
+from NDCG import RelevanceEstimator
+from scripts_for_dataset import TianGong_HumanLabel_Parser
 
 def parse_args():
     parser = argparse.ArgumentParser('NCM')
@@ -83,6 +85,8 @@ def parse_args():
     path_settings.add_argument('--test_dirs', nargs='+',
                                default=['data/TianGong-ST/test_per_query.txt'],
                                help='list of dirs that contain the preprocessed test data')
+    path_settings.add_argument('--relevance_dir', default='./data/TianGong-ST/relevance_label.txt',
+                               help='the dir of relevance_label.txt')
     path_settings.add_argument('--model_dir', default='./outputs/TianGong-ST/models/',
                                help='the dir to store models')
     path_settings.add_argument('--result_dir', default='./outputs/TianGong-ST/results/',
@@ -192,7 +196,7 @@ def test(args):
     assert args.load_model > -1, 'args.load_model should be set at prediction period!' # make sure there is something to store at evaluation
     model.load_model(model_dir=args.model_dir, model_prefix='Best', global_step=args.load_model)
     logger.info('Start testing at model.global_step: {}'.format(model.global_step))
-
+    
     # Compute test loss
     logger.info('Predicting answers on test set...')
     test_batches = dataset.gen_mini_batches('test', 1, shuffle=False)
@@ -213,12 +217,14 @@ def test(args):
     perplexity, perplexity_at_rank = model.perplexity(test_batches, dataset)
     logger.info('Perplexity on test set: {}'.format(perplexity))
     logger.info('Perplexity at rank: {}'.format(perplexity_at_rank))
-
+    
     # Compute NDCG@k
+    relevance_queries, true_relevances = TianGong_HumanLabel_Parser.TianGong_HumanLabel_Parser().parse(args.relevance_dir)
+    relevance_estimatior = RelevanceEstimator(true_relevances, 1)
     trunc_levels = [1, 3, 5, 10]
     for trunc_level in trunc_levels:
-        NDCG = RelevanceEstimation.evaluate(click_model, relevance_sessions, k)
-        logger.info("NDCG@%d: %f".format(trunc_level, NDCG))
+        ndcg = relevance_estimatior.evaluate(model, relevance_queries, trunc_level)
+        logger.info("NDCG@{}: {}".format(trunc_level, ndcg))
 
 def run():
     '''

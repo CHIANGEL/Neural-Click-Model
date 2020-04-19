@@ -57,9 +57,9 @@ class NCM(nn.Module):
             # generate the first input for LSTM: q + 0_i + 0_d
             tmp = torch.zeros(batch_size, 1, 1 + doc_embed.size(2)).cuda()
             first_input = torch.cat((query_embed, tmp), 2) # [batch_size, 1, query_embed_size + 1 + doc_embed_size]
-            # generate the rest 10 inputs: 0_q + i + d
-            tmp = torch.zeros(batch_size, 10, query_embed.size(2)).cuda()
-            rest_input = torch.cat((tmp, clicks, doc_embed), 2) # [batch_size, 10, query_embed_size + 1 + doc_embed_size]
+            # generate the rest inputs: 0_q + i + d
+            tmp = torch.zeros(batch_size, max_doc_num, query_embed.size(2)).cuda()
+            rest_input = torch.cat((tmp, clicks, doc_embed), 2) # [batch_size, max_doc_num, query_embed_size + 1 + doc_embed_size]
             # generate lstm_input 
             lstm_input = torch.cat((first_input, rest_input), 1) # [batch_size, 11, query_embed_size + 1 + doc_embed_size]
             lstm_input = lstm_input.transpose(0, 1) # [11, batch_size, query_embed_size + 1 + doc_embed_size]
@@ -68,9 +68,9 @@ class NCM(nn.Module):
         # print('outputs: {}\n{}\n'.format(outputs.size(), outputs))
         outputs = outputs.transpose(0, 1) # [batch_size, 11, hidden_size]
         # print('outputs: {}\n{}\n'.format(outputs.size(), outputs))
-        outputs = self.output_linear(outputs).view(batch_size, -1)[:, 1:] # [batch_size, 10]
+        outputs = self.output_linear(outputs).view(batch_size, -1)[:, 1:] # [batch_size, max_doc_num]
         # print('outputs: {}\n{}\n'.format(outputs.size(), outputs))
-        logits = self.sigmoid(outputs) # [batch_size, 10]
+        logits = self.sigmoid(outputs) # [batch_size, max_doc_num]
         # print('logits: {}\n{}\n'.format(logits.size(), logits))
         return logits
 
