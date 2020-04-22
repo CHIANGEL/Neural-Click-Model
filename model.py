@@ -80,7 +80,7 @@ class Model(object):
          Create the optimizer according to the args
         '''
         if self.optim_type == 'adagrad':
-            optimizer = torch.optim.Adagrad(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
+            optimizer = torch.optim.Adagrad(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay, rho=0.95)
         elif self.optim_type == 'adadelta':
             optimizer = torch.optim.Adadelta(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
         elif self.optim_type == 'adam':
@@ -153,6 +153,7 @@ class Model(object):
             pred_logits = self.model(query_embed, doc_embed, CLICKS)
             loss, loss_list = self.compute_loss(pred_logits, batch['clicks'])
             loss.backward()
+            nn.utils.clip_grad_value_(self.model.parameters(), self.args.grad_clip)
             self.optimizer.step()
             self.writer.add_scalar('train/loss', loss.data[0], self.global_step)
 

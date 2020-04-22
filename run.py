@@ -32,6 +32,8 @@ def parse_args():
     train_settings = parser.add_argument_group('train settings')
     train_settings.add_argument('--optim', default='adadelta',
                                 help='optimizer type')
+    train_settings.add_argument('--grad_clip', default=1.0,
+                                help='optimizer type')
     train_settings.add_argument('--learning_rate', type=float, default=0.01,
                                 help='learning rate')
     train_settings.add_argument('--lr_decay', type=float, default=0.5,
