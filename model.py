@@ -1,36 +1,58 @@
-# coding: utf8
+# -*- coding:utf8 -*-
+# ==============================================================================
+# Copyright 2017 Baidu.com, Inc. All Rights Reserved
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#    http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""
+This module implements the reading comprehension models based on:
+1. the BiDAF algorithm described in https://arxiv.org/abs/1611.01603
+2. the Match-LSTM algorithm described in https://openreview.net/pdf?id=B1-q5Pqxl
+Note that we use Pointer Network for the decoding stage of both models.
+"""
 
 import os
 import time
 import logging
 import json
+import numpy as np
+import torch
 import copy
 import math
 import random
-import numpy as np
-import torch
-import torch.nn as nn
 from torch.autograd import Variable
 from tqdm import tqdm
+from network import Network
 from tensorboardX import SummaryWriter
-from utils import *
-from NCM import NCM
-
+from torch import nn
+from ndcg import RelevanceEstimator
+from TianGong_HumanLabel_Parser import TianGong_HumanLabel_Parser
+# from utils import calc_metrics
 use_cuda = torch.cuda.is_available()
 
 MINF = 1e-30
 
 class Model(object):
-    '''
-     Model class performs as an interface layer for NCM model.
-    '''
-    def __init__(self, args, query_size, doc_size):
+    """
+    Implements the main reading comprehension model.
+    """
+    def __init__(self, args, query_size, doc_size, vtype_size):
         self.args = args
 
-        # Get logger
+        # logging
         self.logger = logging.getLogger("NCM")
 
-        # Config setting
+        # basic config
         self.hidden_size = args.hidden_size
         self.optim_type = args.optim
         self.learning_rate = args.learning_rate
@@ -38,79 +60,38 @@ class Model(object):
         self.eval_freq = args.eval_freq
         self.global_step = args.load_model if args.load_model > -1 else 0
         self.patience = args.patience
-        self.max_doc_num = args.max_doc_num
-        self.writer = SummaryWriter(self.args.summary_dir) if args.train else None
+        self.max_d_num = args.max_d_num
+        self.writer = None
+        if args.train:
+            self.writer = SummaryWriter(self.args.summary_dir)
 
-        # create embeddings
-        if self.args.embed_type == 'QD+Q+D':
-            query_embedding_QDQ = torch.load('data/' + args.dataset + '/query_embedding.emb')
-            self.query_embedding = nn.Embedding(query_embedding_QDQ.size(0), query_embedding_QDQ.size(1))
-            self.query_embedding.weight.data.copy_(query_embedding_QDQ)
-            doc_embedding_QDQD = torch.load('data/' + args.dataset + '/doc_embedding.emb')
-            self.doc_embedding = nn.Embedding(doc_embedding_QDQD.size(0), doc_embedding_QDQD.size(1))
-            self.doc_embedding.weight.data.copy_(doc_embedding_QDQD)
-        elif self.args.embed_type == 'random':
-            # use random embedding
-            self.query_embedding = nn.Embedding(query_size, self.embed_size)
-            self.doc_embedding = nn.Embedding(doc_size, self.embed_size)
-        else:
-            raise NotImplementedError('Unsupported embed_type: {}'.format(self.args.embed_type))
-        
-        # create the NCM model instance
-        # get_gpu_infos()
-        if self.args.model_type.lower() == 'rnn':
-            input_size = 1 + self.doc_embedding.weight.data.size(1),
-        elif self.args.model_type.lower() == 'lstm':
-            input_size = 1 + self.doc_embedding.weight.data.size(1) + self.query_embedding.weight.data.size(1)
-        else:
-            raise NotImplementedError('Unsupported model_type: {}'.format(self.args.model_type))
-        self.model = NCM(self.args, query_size, doc_size, input_size)
-        self.optimizer = self.create_train_optim()
-        self.criterion = nn.MSELoss()
-        if use_cuda:
-            self.model = self.model.cuda()
+        self.model = Network(self.args, query_size, doc_size, vtype_size)
+
         if args.data_parallel:
             self.model = nn.DataParallel(self.model)
-        para = sum([np.prod(list(p.size())) for p in self.model.parameters()])
-        self.logger.info('Model {} : params: {:4f}M'.format(self.model._get_name(), para * 4 / 1000 / 1000))
-        # get_gpu_infos()
-       
-    def create_train_optim(self):
-        '''
-         Create the optimizer according to the args
-        '''
-        if self.optim_type == 'adagrad':
-            optimizer = torch.optim.Adagrad(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay, rho=0.95)
-        elif self.optim_type == 'adadelta':
-            optimizer = torch.optim.Adadelta(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
-        elif self.optim_type == 'adam':
-            optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
-        elif self.optim_type == 'rprop':
-            optimizer = torch.optim.RMSprop(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
-        elif self.optim_type == 'sgd':
-            optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay, momentum=self.args.momentum)
-        else:
-            raise NotImplementedError('Unsupported optimizer: {}'.format(self.optim_type))
-        return optimizer
+        if use_cuda:
+            self.model = self.model.cuda()
 
-    def adjust_learning_rate(self, decay_rate=0.5):
-        '''
-         Decay the learning rate once reaching the patience threshold
-        '''
-        for param_group in self.optimizer.param_groups:
-            param_group['lr'] = param_group['lr'] * decay_rate
+        self.optimizer = self.create_train_op()
+        self.criterion = nn.MSELoss()
+        
+        # for NDCG@k
+        self.relevance_queries = TianGong_HumanLabel_Parser().parse(args.human_label_dir)
+        self.relevance_estimatior = RelevanceEstimator(args.minimum_occurrence)
+        self.trunc_levels = [1, 3, 5, 10]
 
+    # loss
     def compute_loss(self, pred_scores, target_scores):
-        '''
-         Compute the loss function
-        '''
+        """
+        The loss function
+        """
         total_loss = 0.
         loss_list = []
         cnt = 0
         for batch_idx, scores in enumerate(target_scores):
             cnt += 1
             loss = 0.
-            for position_idx, score in enumerate(scores):
+            for position_idx, score in enumerate(scores[2:]):
                 if score == 0:
                     loss -= torch.log(1. - pred_scores[batch_idx][position_idx].view(1) + MINF)
                 else:
@@ -118,12 +99,39 @@ class Model(object):
             loss_list.append(loss.data[0])
             total_loss += loss
         total_loss /= cnt
+        # print loss.data[0]
         return total_loss, loss_list
 
-    def _train_epoch(self, train_batches, data, min_eval_loss, patience, step_pbar):
-        '''
-         Train the model for a single epoch.
-        '''
+    def create_train_op(self):
+        """
+        Selects the training algorithm and creates a train operation with it
+        """
+        if self.optim_type == 'adagrad':
+            optimizer = torch.optim.Adagrad(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
+        elif self.optim_type == 'adadelta':
+            optimizer = torch.optim.Adadelta(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
+        elif self.optim_type == 'adam':
+            optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
+        elif self.optim_type == 'rprop':
+            optimizer = torch.optim.RMSprop(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
+        elif self.optim_type == 'sgd':
+            optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=self.args.momentum,
+                                        weight_decay=self.args.weight_decay)
+        else:
+            raise NotImplementedError('Unsupported optimizer: {}'.format(self.optim_type))
+        return optimizer
+
+    def adjust_learning_rate(self, decay_rate=0.5):
+        for param_group in self.optimizer.param_groups:
+            param_group['lr'] = param_group['lr'] * decay_rate
+
+    def _train_epoch(self, train_batches, data, max_metric_value, metric_save, patience, step_pbar):
+        """
+        Trains the model for a single epoch.
+        Args:
+            train_batches: iterable batch data for training
+            dropout_keep_prob: float value indicating dropout keep probability
+        """
         evaluate = True
         exit_tag = False
         num_steps = self.args.num_steps
@@ -135,43 +143,45 @@ class Model(object):
             step_pbar.update(1)
             QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
             UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
-            CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:, 0: -1])
-            tmp = torch.zeros(CLICKS.size(0), 1).long()
-            CLICKS = torch.cat((tmp, CLICKS), 1) # CLICKS stands for interaction representation in NCM paper
-
-            query_embed = self.query_embedding(QIDS)  # [batch_size, 1, query_embed_size]
-            doc_embed = self.doc_embedding(UIDS)  # [batch_size, 10, doc_embed_size]
+            VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
+            CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:,:-1])
             if use_cuda:
-                query_embed, doc_embed, CLICKS = query_embed.cuda(), doc_embed.cuda(), CLICKS.cuda()
-            
-            # print('QIDS: {}\n{}\n'.format(QIDS.size(), QIDS))
-            # print('UIDS: {}\n{}\n'.format(UIDS.size(), UIDS))
-            # print('CLICKS: {}\n{}\n'.format(CLICKS.size(), CLICKS))
+                QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
 
             self.model.train()
             self.optimizer.zero_grad()
-            pred_logits = self.model(query_embed, doc_embed, CLICKS)
+            pred_logits = self.model(QIDS, UIDS, VIDS, CLICKS)
             loss, loss_list = self.compute_loss(pred_logits, batch['clicks'])
             loss.backward()
-            nn.utils.clip_grad_value_(self.model.parameters(), self.args.grad_clip)
             self.optimizer.step()
             self.writer.add_scalar('train/loss', loss.data[0], self.global_step)
 
             if evaluate and self.global_step % self.eval_freq == 0:
                 if data.dev_set is not None:
-                    eval_batches = data.gen_mini_batches('dev', 1, shuffle=False)
-                    eval_loss = self.evaluate(eval_batches, data, 
-                                              result_dir=self.args.result_dir,
-                                              result_prefix='train_dev.predicted.{}.{}'.format(self.args.algo, self.global_step), 
-                                              t=-1)
+                    eval_batches = data.gen_mini_batches('dev', batch_size, shuffle=False)
+                    eval_loss, perplexity, perplexity_at_rank = self.evaluate(eval_batches, data, result_dir=self.args.result_dir, t=-1,
+                                                                                result_prefix='train_dev.predicted.{}.{}'.format(self.args.algo,
+                                                                                                                                self.global_step))
+                    eval_batches1 = data.gen_mini_batches('test', batch_size, shuffle=False)
+                    eval_loss1, perplexity1, perplexity_at_rank1 = self.evaluate(eval_batches1, data, result_dir=self.args.result_dir, t=-1,
+                                                                                result_prefix='train_test.predicted.{}.{}'.format(self.args.algo,
+                                                                                                                                self.global_step))
                     self.writer.add_scalar("dev/loss", eval_loss, self.global_step)
-                    if eval_loss < self.model.best_eval_loss:
-                        self.logger.info('Better model found in dev on global step: {}'.format(self.global_step))
-                        self.model.best_eval_loss = eval_loss
-                        self.save_model(save_dir, 'Best')
+                    self.writer.add_scalar("dev/perplexity", perplexity, self.global_step)
+                    self.writer.add_scalar("test/loss", eval_loss1, self.global_step)
+                    self.writer.add_scalar("test/perplexity", perplexity1, self.global_step)
+                    # for metric in ['ndcg@1', 'ndcg@3', 'ndcg@10', 'ndcg@20']:
+                    #     self.writer.add_scalar("dev/{}".format(metric), metrics['{}'.format(metric)], self.global_step)
+                    # if metrics['ndcg@10'] > max_metric_value:
+                    #     self.save_model(save_dir, save_prefix+'_best')
+                    #     max_metric_value = metrics['ndcg@10']
+                    for trunc_level in self.trunc_levels:
+                        ndcg_version1, ndcg_version2 = self.relevance_estimatior.evaluate(self, data, self.relevance_queries, trunc_level)
+                        self.writer.add_scalar("NDCG_version1/{}".format(trunc_level), ndcg_version1, self.global_step)
+                        self.writer.add_scalar("NDCG_version2/{}".format(trunc_level), ndcg_version2, self.global_step)
 
-                    if eval_loss < min_eval_loss:
-                        min_eval_loss = eval_loss
+                    if eval_loss < metric_save:
+                        metric_save = eval_loss
                         patience = 0
                     else:
                         patience += 1
@@ -179,8 +189,7 @@ class Model(object):
                         self.adjust_learning_rate(self.args.lr_decay)
                         self.learning_rate *= self.args.lr_decay
                         self.writer.add_scalar('train/lr', self.learning_rate, self.global_step)
-                        # reset the saved min eval loss (make it a bit larger). Because lr is decayed.
-                        min_eval_loss = eval_loss
+                        metric_save = eval_loss
                         patience = 0
                         self.patience += 1
                 else:
@@ -190,176 +199,126 @@ class Model(object):
             if self.global_step >= num_steps:
                 exit_tag = True
 
-        return exit_tag, min_eval_loss, patience
+        return max_metric_value, exit_tag, metric_save, patience
 
     def train(self, data):
-        '''
-         Training of the model starts here.
-        '''
-        epoch, patience, min_eval_loss = 0., 0, 1e10
+        max_metric_value, epoch, patience, metric_save = 0., 0, 0, 1e10
+        # 进度条
         step_pbar = tqdm(total=self.args.num_steps)
         exit_tag = False
         self.writer.add_scalar('train/lr', self.learning_rate, self.global_step)
         while not exit_tag:
             epoch += 1
             train_batches = data.gen_mini_batches('train', self.args.batch_size, shuffle=True)
-            exit_tag, min_eval_loss, patience = self._train_epoch(train_batches, data, min_eval_loss, patience, step_pbar)
+            max_metric_value, exit_tag, metric_save, patience = self._train_epoch(train_batches, data,
+                                                                                max_metric_value, metric_save,
+                                                                                patience, step_pbar)
 
-    def evaluate(self, eval_batches, dataset, result_dir=None, result_prefix=None, t=-1):
-        eval_outputs = []
-        total_loss, total_num = 0., 0
-        self.logger.info('Evaluation at global_step {}.'.format(self.global_step))
-        with torch.no_grad():
-            for b_itx, batch in enumerate(eval_batches):
-                if b_itx == t:
-                    break
-
-                QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
-                UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
-                CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:, 0: -1])
-                tmp = torch.zeros(CLICKS.size(0), 1).long()
-                CLICKS = torch.cat((tmp, CLICKS), 1) # CLICKS stands for interaction representation in NCM paper
-
-                query_embed = self.query_embedding(QIDS)  # [batch_size, 1, query_embed_size]
-                doc_embed = self.doc_embedding(UIDS)  # [batch_size, 10, doc_embed_size]
-                if use_cuda:
-                    query_embed, doc_embed, CLICKS = query_embed.cuda(), doc_embed.cuda(), CLICKS.cuda()
-
-                self.model.eval()
-                pred_logits = self.model(query_embed, doc_embed, CLICKS)
-                loss, loss_list = self.compute_loss(pred_logits, batch['clicks'])
-
-                for eval_loss, data, pred_logit in zip(loss_list, batch['raw_data'], pred_logits.data.cpu().numpy().tolist()):
-                    eval_outputs.append([data['qids'], 
-                                         data['uids'],
-                                         data['clicks'],
-                                         pred_logit, 
-                                         eval_loss])
-                total_loss += loss
-                total_num += 1
-
-            if result_dir is not None and result_prefix is not None:
-                result_file = os.path.join(result_dir, result_prefix + '.txt')
-                with open(result_file, 'w') as fout:
-                    for sample in eval_outputs:
-                        fout.write('\t'.join(map(str, sample)) + '\n')
-
-                self.logger.info('Saving {} results to {}'.format(result_prefix, result_file))
-            ave_span_loss = 1.0 * total_loss / total_num
-        return ave_span_loss
-
-    def log_likelihood(self, test_batches, dataset):
+    def compute_perplexity(self, pred_scores, target_scores):
         '''
-         Compute the log likelihood on test set
-        '''
-        loglikelihood, total_num = 0.0, 0
-        with torch.no_grad():
-            for b_itx, batch in enumerate(test_batches):
-                QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
-                UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
-                CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:, 0: -1])
-                tmp = torch.zeros(CLICKS.size(0), 1).long()
-                CLICKS = torch.cat((tmp, CLICKS), 1) # CLICKS stands for interaction representation in NCM paper
-
-                query_embed = self.query_embedding(QIDS)  # [batch_size, 1, query_embed_size]
-                doc_embed = self.doc_embedding(UIDS)  # [batch_size, 10, doc_embed_size]
-                if use_cuda:
-                    query_embed, doc_embed, CLICKS = query_embed.cuda(), doc_embed.cuda(), CLICKS.cuda()
-
-                self.model.eval()
-                pred_logits = self.model(query_embed, doc_embed, CLICKS)
-                # print('pred_logits: ({},{})\n{}\n'.format(len(pred_logits), len(pred_logits[0]), pred_logits))
-
-                # start computing log likelihood per query
-                for batch_idx, scores in enumerate(batch['clicks']):
-                    for position_idx, score in enumerate(scores):
-                        total_num += 1
-                        if score == 0:
-                            loglikelihood += torch.log(1. - pred_logits[batch_idx][position_idx].view(1) + MINF)
-                        else:
-                            loglikelihood += torch.log(pred_logits[batch_idx][position_idx].view(1) + MINF)
-            loglikelihood /= total_num
-        return loglikelihood
-    
-    def perplexity(self, test_batches, dataset):
-        '''
-         Compute the perplexity on test set
+         Compute the perplexity
         '''
         perplexity_at_rank = [0.0] * 10 # 10 docs per query
         total_num = 0
-        with torch.no_grad():
-            for b_itx, batch in enumerate(test_batches):
-                QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
-                UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
-                CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:, 0: -1])
-                tmp = torch.zeros(CLICKS.size(0), 1).long()
-                CLICKS = torch.cat((tmp, CLICKS), 1) # CLICKS stands for interaction representation in NCM paper
+        for batch_idx, scores in enumerate(target_scores):
+            total_num += 1
+            for position_idx, score in enumerate(scores[2:]):
+                if score == 0:
+                    perplexity_at_rank[position_idx] += torch.log2(1. - pred_scores[batch_idx][position_idx].view(1) + MINF)
+                else:
+                    perplexity_at_rank[position_idx] += torch.log2(pred_scores[batch_idx][position_idx].view(1) + MINF)
+        return total_num, perplexity_at_rank
 
-                query_embed = self.query_embedding(QIDS)  # [batch_size, 1, query_embed_size]
-                doc_embed = self.doc_embedding(UIDS)  # [batch_size, 10, doc_embed_size]
-                if use_cuda:
-                    query_embed, doc_embed, CLICKS = query_embed.cuda(), doc_embed.cuda(), CLICKS.cuda()
-
-                self.model.eval()
-                pred_logits = self.model(query_embed, doc_embed, CLICKS)
-                # print('pred_logits: ({},{})\n{}\n'.format(len(pred_logits), len(pred_logits[0]), pred_logits))
-
-                # start computing perplexity
-                for batch_idx, scores in enumerate(batch['clicks']):
-                    total_num += 1
-                    for position_idx, score in enumerate(scores):
-                        if score == 0:
-                            perplexity_at_rank[position_idx] += torch.log2(1. - pred_logits[batch_idx][position_idx].view(1) + MINF)
-                        else:
-                            perplexity_at_rank[position_idx] += torch.log2(pred_logits[batch_idx][position_idx].view(1) + MINF)
-            perplexity_at_rank = [2 ** (-x / total_num) for x in perplexity_at_rank]
-            perplexity = sum(perplexity_at_rank) / len(perplexity_at_rank)
-        return perplexity, perplexity_at_rank
-    
-    def predict_relevance(self, qid, uid):
-        loglikelihood, total_num = 0.0, 0
-        with torch.no_grad():
-            QIDS = Variable(torch.from_numpy(np.array(qid, dtype=np.int64)))
-            UIDS = Variable(torch.from_numpy(np.array(uid, dtype=np.int64)))
-            CLICKS = torch.zeros(1, 1).long()
-            
-            query_embed = self.query_embedding(QIDS).view(1, 1, -1)  # [1, 1, query_embed_size]
-            doc_embed = self.doc_embedding(UIDS).view(1, 1, -1)  # [1, 1, doc_embed_size]
+    def evaluate(self, eval_batches, dataset, result_dir=None, result_prefix=None, t=-1):
+        eval_ouput = []
+        # total_loss_list = []
+        total_loss, total_num = 0., 0
+        perplexty_num = 0
+        perplexity_at_rank = [0.0] * 10 # 10 docs per query
+        for b_itx, batch in enumerate(eval_batches):
+            if b_itx == t:
+                break
+            if b_itx % 5000 == 0:
+                self.logger.info('Evaluation step {}.'.format(b_itx))
+            QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
+            UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
+            VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
+            CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:,:-1])
             if use_cuda:
-                query_embed, doc_embed, CLICKS = query_embed.cuda(), doc_embed.cuda(), CLICKS.cuda()
-            # print('query_embed: {}\n{}\n'.format(query_embed.size(), query_embed))
-            # print('doc_embed: {}\n{}\n'.format(doc_embed.size(), doc_embed))
-            # print('CLICKS: {}\n{}\n'.format(CLICKS.size(), CLICKS))
+                QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
 
             self.model.eval()
-            pred_logits = self.model(query_embed, doc_embed, CLICKS)
-            # print('pred_logits: ({},{})\n{}\n'.format(len(pred_logits), len(pred_logits[0]), pred_logits))
+            pred_logits = self.model(QIDS, UIDS, VIDS, CLICKS)
+            loss, loss_list = self.compute_loss(pred_logits, batch['clicks'])
+            tmp_num, tmp_perplexity_at_rank = self.compute_perplexity(pred_logits, batch['clicks'])
+            perplexty_num += tmp_num
+            perplexity_at_rank = [perplexity_at_rank[i] + tmp_perplexity_at_rank[i] for i in range(10)]
+            # total_loss_list += loss_list
+            # pred_logits_list = pred_logits.data.cpu().numpy().tolist()
+            for pred_metric, data, pred_logit in zip(loss_list, batch['raw_data'], pred_logits.data.cpu().numpy().tolist()):
+                eval_ouput.append([data['session_id'], data['query'],
+                                   data['urls'][1:], data['vtypes'][1:], data['clicks'][2:], pred_logit, pred_metric])
+            total_loss += loss.data[0] * len(batch['raw_data'])
+            total_num += len(batch['raw_data'])
+
+        if result_dir is not None and result_prefix is not None:
+            result_file = os.path.join(result_dir, result_prefix + '.txt')
+            with open(result_file, 'w') as fout:
+                for sample in eval_ouput:
+                    fout.write('\t'.join(map(str, sample)) + '\n')
+
+            self.logger.info('Saving {} results to {}'.format(result_prefix, result_file))
+
+        # this average loss is invalid on test set, since we don't have true start_id and end_id
+        assert total_num == perplexty_num
+        ave_span_loss = 1.0 * total_loss / total_num
+        perplexity_at_rank = [2 ** (-x / total_num) for x in perplexity_at_rank]
+        perplexity = sum(perplexity_at_rank) / len(perplexity_at_rank)
+        # compute the bleu and rouge scores if reference answers is provided
+        # metrics = self.cal_metrics(eval_ouput)
+        # print metrics
+        return ave_span_loss, perplexity, perplexity_at_rank # , np.mean(total_loss_list)
+    
+    def predict_relevance(self, qid, uid, vid):
+        qids = [[qid, qid]]
+        uids = [[0, uid]]
+        vids = [[0, vid]]
+        clicks = [[0, 0, 0]]
+        QIDS = Variable(torch.from_numpy(np.array(qids, dtype=np.int64)))
+        UIDS = Variable(torch.from_numpy(np.array(uids, dtype=np.int64)))
+        VIDS = Variable(torch.from_numpy(np.array(vids, dtype=np.int64)))
+        CLICKS = Variable(torch.from_numpy(np.array(clicks, dtype=np.int64))[:,:-1])
+        if use_cuda:
+            QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
+        self.model.eval()
+        pred_logits = self.model(QIDS, UIDS, VIDS, CLICKS)
         return pred_logits[0][0]
 
     def save_model(self, model_dir, model_prefix):
-        '''
-         Save the NCM model and optimizer into model_dir with model_prefix as the model indicator
-        '''
+        """
+        Saves the model into model_dir with model_prefix as the model indicator
+        """
         torch.save(self.model.state_dict(), os.path.join(model_dir, model_prefix+'_{}.model'.format(self.global_step)))
         torch.save(self.optimizer.state_dict(), os.path.join(model_dir, model_prefix + '_{}.optimizer'.format(self.global_step)))
-        self.logger.info('Model and optimizer saved in {}, with prefix {} and global step {}.'.format(model_dir, model_prefix, self.global_step))
+        self.logger.info('Model and optimizer saved in {}, with prefix {} and global step {}.'.format(model_dir,
+                                                                                                      model_prefix,
+                                                                                                      self.global_step))
 
     def load_model(self, model_dir, model_prefix, global_step):
-        '''
-         Load the NCM model and optimizer from model_dir with model_prefix as the model indicator
-        '''
-        # Load the optimizer
+        """
+        Restores the model into model_dir from model_prefix as the model indicator
+        """
         optimizer_path = os.path.join(model_dir, model_prefix + '_{}.optimizer'.format(global_step))
         if not os.path.isfile(optimizer_path):
-            optimizer_path = os.path.join(model_dir, model_prefix + '_{}.optimizer'.format(global_step))
+            optimizer_path = os.path.join(model_dir, model_prefix + '_best_{}.optimizer'.format(global_step))
         if os.path.isfile(optimizer_path):
             self.optimizer.load_state_dict(torch.load(optimizer_path))
-            self.logger.info('Optimizer restored from {}, with prefix {} and global step {}.'.format(model_dir, model_prefix, global_step))
-        
-        # Load the NCM model
+            self.logger.info('Optimizer restored from {}, with prefix {} and global step {}.'.format(model_dir,
+                                                                                                     model_prefix,
+                                                                                                     global_step))
         model_path = os.path.join(model_dir, model_prefix + '_{}.model'.format(global_step))
         if not os.path.isfile(model_path):
-            model_path = os.path.join(model_dir, model_prefix + '_{}.model'.format(global_step))
+            model_path = os.path.join(model_dir, model_prefix + '_best_{}.model'.format(global_step))
         if use_cuda:
             state_dict = torch.load(model_path)
         else:

@@ -1,3 +1,11 @@
+'''
+@Author: your name
+@Date: 2020-07-09 11:47:56
+@LastEditTime: 2020-07-09 12:26:51
+@LastEditors: Please set LastEditors
+@Description: In User Settings Edit
+@FilePath: /model/utils.py
+'''
 import os
 import pprint
 
@@ -7,7 +15,8 @@ def check_path(file_path):
 
 def save_dict(file_path, file_name, dict):
     check_path(file_path)
-    file = open(file_path + file_name, 'w')
+    data_path = os.path.join(file_path, file_name)
+    file = open(data_path, 'w')
     file.write(str(dict))
     file.close()
 
@@ -19,7 +28,8 @@ def load_dict(file_path, file_name):
     
 def save_list(file_path, file_name, list_data):
     check_path(file_path)
-    file = open(file_path + file_name, 'w')
+    data_path = os.path.join(file_path, file_name)
+    file = open(data_path, 'w')
     file.write(str(list_data))
     file.close()
 
@@ -31,7 +41,8 @@ def load_list(file_path, file_name):
 
 def generate_data_per_query(infos_per_query, indices, file_path, file_name):
     check_path(file_path)
-    file = open(file_path + file_name, 'w')
+    data_path = os.path.join(file_path, file_name)
+    file = open(data_path, 'w')
     for key in indices:
         interaction_info = infos_per_query[key]
         sid = interaction_info['sid']

@@ -1,29 +1,29 @@
-# coding: utf8
-
-import os
+# encoding:utf-8
 import sys
 import time
+import os
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "3"
 import pickle
 import argparse
 import logging
+from dataset import Dataset
+from model import Model
+from utils import *
+from ndcg import RelevanceEstimator
+from TianGong_HumanLabel_Parser import TianGong_HumanLabel_Parser
 import pprint
 
-from model import Model
-from dataset import Dataset
-from NDCG import RelevanceEstimator
-from scripts_for_dataset import TianGong_HumanLabel_Parser
-
 def parse_args():
+    """
+    Parses command line arguments.
+    """
     parser = argparse.ArgumentParser('NCM')
-
-    parser.add_argument('--dataset', default='TianGong-ST',
-                        help='name of the dataset')
     parser.add_argument('--train', action='store_true',
                         help='train the model')
     parser.add_argument('--evaluate', action='store_true',
                         help='evaluate the model on dev set')
-    parser.add_argument('--test', action='store_true',
-                        help='test the model for test set with trained model')
+    parser.add_argument('--predict', action='store_true',
+                        help='predict the answers for test set with trained model')
     parser.add_argument('--rank', action='store_true',
                         help='rank on train set')
     parser.add_argument('--gpu', type=str, default='',
@@ -32,74 +32,69 @@ def parse_args():
     train_settings = parser.add_argument_group('train settings')
     train_settings.add_argument('--optim', default='adadelta',
                                 help='optimizer type')
-    train_settings.add_argument('--grad_clip', default=1.0,
-                                help='optimizer type')
     train_settings.add_argument('--learning_rate', type=float, default=0.01,
                                 help='learning rate')
-    train_settings.add_argument('--lr_decay', type=float, default=0.5,
-                                help='lr decay')
-    train_settings.add_argument('--patience', type=int, default=3,
-                                help='lr half when more than the patience times of evaluation\' loss don\'t decrease')
-    train_settings.add_argument('--weight_decay', type=float, default=0,
+    train_settings.add_argument('--weight_decay', type=float, default=1e-5,
                                 help='weight decay')
     train_settings.add_argument('--momentum', type=float, default=0.99,
                                 help='momentum')
-    train_settings.add_argument('--dropout_rate', type=float, default=0,
+    train_settings.add_argument('--dropout_rate', type=float, default=0.5,
                                 help='dropout rate')
-    train_settings.add_argument('--batch_size', type=int, default=1,
+    train_settings.add_argument('--batch_size', type=int, default=64,
                                 help='train batch size')
-    train_settings.add_argument('--num_steps', type=int, default=200000,
+    train_settings.add_argument('--num_steps', type=int, default=20000,
                                 help='number of training steps')
-    train_settings.add_argument('--num_train_files', type=int, default=40,
-                                help='number of training files') # ????????????????????????
-    train_settings.add_argument('--num_dev_files', type=int, default=40,
+    train_settings.add_argument('--num_train_files', type=int, default=1,
+                                help='number of training files')
+    train_settings.add_argument('--num_dev_files', type=int, default=1,
                                 help='number of dev files')
-    train_settings.add_argument('--num_test_files', type=int, default=40,
+    train_settings.add_argument('--num_test_files', type=int, default=1,
                                 help='number of test files')
-    train_settings.add_argument('--eval_freq', type=int, default=1000,
-                                help='the frequency of evaluating on the dev set when training')
-    train_settings.add_argument('--check_point', type=int, default=1000,
-                                help='the frequency of saving model')
+    train_settings.add_argument('--minimum_occurrence', type=int, default=1,
+                                help='minimum_occurrence for NDCG')
 
     model_settings = parser.add_argument_group('model settings')
-    model_settings.add_argument('--representation_mode', default='QD',
-                                help='representation mode of queries, documents and interactions')
     model_settings.add_argument('--algo', default='NCM',
                                 help='choose the algorithm to use')
-    model_settings.add_argument('--embed_type', default='QD+Q+D',
-                                help='which type of embeddings to use')
     model_settings.add_argument('--embed_size', type=int, default=128,
-                                help='size of the embeddings if embed_type=random')
-    model_settings.add_argument('--hidden_size', type=int, default=256,
-                                help='size of RNN/LSTM hidden units')
-    model_settings.add_argument('--model_type', default='rnn',
-                                help='use RNN or LSTM')
-    model_settings.add_argument('--max_doc_num', type=int, default=10,
-                                help='max number of docs in a query')
+                                help='size of the embeddings')
+    model_settings.add_argument('--hidden_size', type=int, default=128,
+                                help='size of LSTM hidden units')
+    model_settings.add_argument('--max_d_num', type=int, default=10,
+                                help='max number of docs in a session')
 
     path_settings = parser.add_argument_group('path settings')
     path_settings.add_argument('--train_dirs', nargs='+',
-                               default=['data/TianGong-ST/train_per_query.txt'],
+                               default=['./data/TianGong-ST/train_per_query.txt'],
                                help='list of dirs that contain the preprocessed train data')
     path_settings.add_argument('--dev_dirs', nargs='+',
-                               default=['data/TianGong-ST/dev_per_query.txt'],
+                               default=['./data/TianGong-ST/dev_per_query.txt'],
                                help='list of dirs that contain the preprocessed dev data')
     path_settings.add_argument('--test_dirs', nargs='+',
-                               default=['data/TianGong-ST/test_per_query.txt'],
+                               default=['./data/TianGong-ST/test_per_query.txt'],
                                help='list of dirs that contain the preprocessed test data')
-    path_settings.add_argument('--relevance_dir', default='./data/TianGong-ST/relevance_label.txt',
-                               help='the dir of relevance_label.txt')
-    path_settings.add_argument('--model_dir', default='./outputs/TianGong-ST/models/',
+    path_settings.add_argument('--human_label_dir', default='./data/TianGong-ST/human_label.txt',
+                               help='the dir to Human Label txt file')
+    path_settings.add_argument('--model_dir', default='./outputs/models/',
                                help='the dir to store models')
-    path_settings.add_argument('--result_dir', default='./outputs/TianGong-ST/results/',
+    path_settings.add_argument('--result_dir', default='./outputs/results/',
                                help='the dir to output the results')
-    path_settings.add_argument('--summary_dir', default='./outputs/TianGong-ST/summary/',
+    path_settings.add_argument('--summary_dir', default='./outputs/summary/',
                                help='the dir to write tensorboard summary')
-    path_settings.add_argument('--log_dir', default='./outputs/TianGong-ST/logs/',
-                               help='path of the log file')
+    path_settings.add_argument('--log_dir', default='./outputs/log/',
+                               help='path of the log file. If not set, logs are printed to console')
+
+    path_settings.add_argument('--eval_freq', type=int, default=2000,
+                               help='the frequency of evaluating on the dev set when training')
+    path_settings.add_argument('--check_point', type=int, default=2000,
+                               help='the frequency of saving model')
+    path_settings.add_argument('--patience', type=int, default=3,
+                               help='lr half when more than the patience times of evaluation\' loss don\'t decrease')
+    path_settings.add_argument('--lr_decay', type=float, default=0.5,
+                               help='lr decay')
     path_settings.add_argument('--load_model', type=int, default=-1,
                                help='load model global step')
-    path_settings.add_argument('--data_parallel', action='store_true',
+    path_settings.add_argument('--data_parallel', type=bool, default=False,
                                help='data_parallel')
     path_settings.add_argument('--gpu_num', type=int, default=1,
                                help='gpu_num')
@@ -108,163 +103,149 @@ def parse_args():
 
 def train(args):
     """
-     Training for NCM starts here
+     trains the model
     """
-    # Get logger
     logger = logging.getLogger("NCM")
-
-    # Check the data files
     logger.info('Checking the data files...')
-    for data_path in args.train_dirs + args.dev_dirs:
+    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs:
         assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
     assert len(args.train_dirs) > 0, 'No train files are provided.'
-    
-    # Load dataset
-    logger.info("Loading the dataset...")
-    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs)
-
-    # Model initialization
-    logger.info('Initializing the model...')
-    model = Model(args, len(dataset.query_qid), len(dataset.url_uid))
+    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs)
+    logger.info('Initialize the model...')
+    model = Model(args, len(dataset.qid_query), len(dataset.uid_url),  len(dataset.vid_vtype))
+    logger.info('model.global_step: {}'.format(model.global_step))
     if args.load_model > -1:
         logger.info('Restoring the model...')
         model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
-    logger.info('Start training at model.global_step: {}'.format(model.global_step))
-
-    # Start training
-    logger.info('Training the model on training set...')
+    logger.info('Training the model...')
     model.train(dataset)
     logger.info('Done with model training!')
 
 def evaluate(args):
     """
-     Evaluate the pre-trained model on dev dataset
+     compute perplexity and log-likelihood for dev file
     """
-    # Get logger
     logger = logging.getLogger("NCM")
-
-    # Check the data files
     logger.info('Checking the data files...')
-    for data_path in args.train_dirs + args.dev_dirs:
+    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs:
         assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
     assert len(args.dev_dirs) > 0, 'No dev files are provided.'
-
-    # Load dataset
-    logger.info("Loading the dataset...")
-    dataset = Dataset(args, dev_dirs=args.dev_dirs)
-
-    # Model Construction
-    logger.info('Constructing the model...')
-    model = Model(args, len(dataset.query_qid), len(dataset.url_uid))
-
-    # Restore the pre-trained model
-    logger.info('Restoring the pre-trained model...')
-    assert args.load_model > -1, 'args.load_model should be set at evaluation period!' # make sure there is something to store at evaluation
+    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs)
+    logger.info('Initialize the model...')
+    model = Model(args, len(dataset.qid_query), len(dataset.uid_url), len(dataset.vid_vtype))
+    logger.info('model.global_step: {}'.format(model.global_step))
+    assert args.load_model > -1
+    logger.info('Restoring the model...')
     model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
-    logger.info('Start evaluation at model.global_step: {}'.format(model.global_step))
-
-    # Start evaluation
     logger.info('Evaluating the model on dev set...')
-    dev_batches = dataset.gen_mini_batches('dev', 1, shuffle=False)
-    dev_loss = model.evaluate(dev_batches, dataset, result_dir=args.result_dir,
-                              result_prefix='dev.{}.{}.{}'.format(args.algo, args.load_model, time.strftime("%m-%d %H:%M:%S", time.localtime())))
+    dev_batches = dataset.gen_mini_batches('dev', args.batch_size, shuffle=False)
+    dev_loss, perplexity, perplexity_at_rank = model.evaluate(dev_batches, dataset, result_dir=args.result_dir,
+                                                                result_prefix='dev.predicted.{}.{}.{}'.format(args.algo, args.load_model, time.time()))
     logger.info('Loss on dev set: {}'.format(dev_loss))
+    logger.info('Perplexity on dev set: {}'.format(perplexity))
+    logger.info('Perplexity at rank: {}'.format(perplexity_at_rank))
     logger.info('Predicted results are saved to {}'.format(os.path.join(args.result_dir)))
-    logger.info('Done with model evaluation!')
 
-def test(args):
+def predict(args):
     """
-     Predict answers for test files
+     compute perplexity and log-likelihood for test file
     """
-    # Get logger
     logger = logging.getLogger("NCM")
-
-    # Check the data files
     logger.info('Checking the data files...')
-    for data_path in args.test_dirs:
+    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs:
         assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
     assert len(args.test_dirs) > 0, 'No test files are provided.'
-
-    # Load dataset
-    logger.info("Loading the dataset...")
-    dataset = Dataset(args, test_dirs=args.test_dirs)
-
-    # Model Construction
-    logger.info('Constructing the model...')
-    model = Model(args, len(dataset.query_qid), len(dataset.url_uid))
-
-    # Restore the pre-trained model
-    logger.info('Restoring the pre-trained model...')
-    assert args.load_model > -1, 'args.load_model should be set at prediction period!' # make sure there is something to store at evaluation
-    model.load_model(model_dir=args.model_dir, model_prefix='Best', global_step=args.load_model)
-    logger.info('Start testing at model.global_step: {}'.format(model.global_step))
-    
-    # Compute test loss
-    logger.info('Predicting answers on test set...')
-    test_batches = dataset.gen_mini_batches('test', 1, shuffle=False)
-    test_loss = model.evaluate(test_batches, dataset, result_dir=args.result_dir,
-                               result_prefix='test.{}.{}.{}'.format(args.algo, args.load_model, time.strftime("%m-%d %H:%M:%S", time.localtime())))
-    logger.info('Predicted results are saved to {}'.format(os.path.join(args.result_dir)))
+    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs)
+    logger.info('Initialize the model...')
+    model = Model(args, len(dataset.qid_query), len(dataset.uid_url), len(dataset.vid_vtype))
+    logger.info('model.global_step: {}'.format(model.global_step))
+    assert args.load_model > -1
+    logger.info('Restoring the model...')
+    model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
+    logger.info('Predict on test files...')
+    test_batches = dataset.gen_mini_batches('test', args.batch_size, shuffle=False)
+    test_loss, perplexity, perplexity_at_rank = model.evaluate(test_batches, dataset, result_dir=args.result_dir,
+                                                                result_prefix='test.predicted.{}.{}.{}'.format(args.algo, args.load_model, time.time()))
     logger.info('Loss on test set: {}'.format(test_loss))
+    logger.info('perplexity on test set: {}'.format(perplexity))
+    logger.info('perplexity at rank: {}'.format(perplexity_at_rank))
+    logger.info('Predicted results are saved to {}'.format(os.path.join(args.result_dir)))
 
-    # Compute log likelihood
-    logger.info('Computing log likelihood on test set...')
-    test_batches = dataset.gen_mini_batches('test', 1, shuffle=False)
-    loglikelihood = model.log_likelihood(test_batches, dataset)
-    logger.info('Log likelihood on test set: {}'.format(loglikelihood))
-
-    # Compute perplexity
-    logger.info('Computing perplexity on test set...')
-    test_batches = dataset.gen_mini_batches('test', 1, shuffle=False)
-    perplexity, perplexity_at_rank = model.perplexity(test_batches, dataset)
-    logger.info('Perplexity on test set: {}'.format(perplexity))
-    logger.info('Perplexity at rank: {}'.format(perplexity_at_rank))
-    
-    # Compute NDCG@k
-    if args.dataset == 'TianGong-ST':
-        relevance_queries, true_relevances = TianGong_HumanLabel_Parser.TianGong_HumanLabel_Parser().parse(args.relevance_dir)
-        relevance_estimatior = RelevanceEstimator(true_relevances, 1)
-        trunc_levels = [1, 3, 5, 10]
-        for trunc_level in trunc_levels:
-            ndcg = relevance_estimatior.evaluate(model, relevance_queries, trunc_level)
-            logger.info("NDCG@{}: {}".format(trunc_level, ndcg))
+def rank(args):
+    """
+     ranking performance on test files
+    """
+    logger = logging.getLogger("NCM")
+    logger.info('Checking the data files...')
+    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs:
+        assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
+    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs)
+    #pprint.pprint(dataset.query_qid)
+    #pprint.pprint(dataset.url_uid)
+    #pprint.pprint(dataset.uid_vid)
+    logger.info('Initialize the model...')
+    model = Model(args, len(dataset.qid_query), len(dataset.uid_url), len(dataset.vid_vtype))
+    logger.info('model.global_step: {}'.format(model.global_step))
+    assert args.load_model > -1
+    logger.info('Restoring the model...')
+    model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
+    logger.info('Compute NDCG on test files...')
+    relevance_queries = TianGong_HumanLabel_Parser().parse(args.human_label_dir)
+    relevance_estimatior = RelevanceEstimator(args.minimum_occurrence)
+    trunc_levels = [1, 3, 5, 10]
+    for trunc_level in trunc_levels:
+        ndcg_version1, ndcg_version2 = relevance_estimatior.evaluate(model, dataset, relevance_queries, trunc_level)
+        logger.info("NDCG@{}: {}, {}".format(trunc_level, ndcg_version1, ndcg_version2))
+    logger.info('【{}, {}】'.format(args.load_model, args.minimum_occurrence))
 
 def run():
-    '''
-     The whole system starts from here.
-    '''
-    # Parse arguments
+    """
+     Prepares and runs the whole system.
+    """
+    # get arguments
     args = parse_args()
     assert args.batch_size % args.gpu_num == 0
     assert args.hidden_size % 2 == 0
-    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
-    # Check the directories
-    for dir_path in [args.model_dir, args.result_dir, args.summary_dir, args.log_dir]:
+    # create a logger
+    logger = logging.getLogger("NCM")
+    logger.setLevel(logging.INFO)
+    formatter = logging.Formatter('%(asctime)s - %(message)s')
+    check_path(args.model_dir)
+    check_path(args.result_dir)
+    check_path(args.summary_dir)
+    if args.log_dir:
+        check_path(args.log_dir)
+        file_handler = logging.FileHandler(args.log_dir + time.strftime('%Y-%m-%d-%H:%M:%S',time.localtime(time.time())) + '.txt')
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+    else:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+
+    logger.info('Running with args : {}'.format(args))
+
+    # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    # os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+
+    logger.info('Checking the directories...')
+    for dir_path in [args.model_dir, args.result_dir, args.summary_dir]:
+        # [args.vocab_dir, args.model_dir, args.result_dir, args.summary_dir]:
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
     
-    # Logger initializations
-    logger = logging.getLogger("NCM")
-    logger.setLevel(logging.INFO)
-    formatter = logging.Formatter('%(asctime)s: %(message)s')
-    file_handler = logging.FileHandler(args.log_dir + time.strftime("%m-%d %H:%M:%S", time.localtime()) + '.log')
-    file_handler.setLevel(logging.INFO)
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-    logger.info('Running with args: {}'.format(args))
-
-    # Run the NCM system
     if args.train:
         train(args)
     if args.evaluate:
         evaluate(args)
-    if args.test:
-        test(args)
+    if args.predict:
+        predict(args)
     if args.rank:
         rank(args)
-    logger.info('Run done.')
+    logger.info('run done.')
 
 if __name__ == '__main__':
     run()
