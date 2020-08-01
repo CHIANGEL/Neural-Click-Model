@@ -4,6 +4,8 @@
 
 This is an non-official implementation of Neural Click Model proposed in the paper: [A Neural Click Model for Web Search. WWW 2016](https://dl.acm.org/doi/10.1145/2872427.2883033).
 
+**NOTE**: The original paper use one-hot encoding for query/doc embeddings. This makes the embedding dimensionality up to 10240, which is too large for training on GPU efficiently. So here I use nn.embedding provided by PyTorch to constrain the dimensionality.
+
 ## Requirements
 
 - python 3.7
