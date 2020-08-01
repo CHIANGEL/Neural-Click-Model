@@ -233,7 +233,7 @@ class Model(object):
         eval_ouput = []
         # total_loss_list = []
         total_loss, total_num = 0., 0
-        perplexty_num = 0
+        perplexity_num = 0
         perplexity_at_rank = [0.0] * 10 # 10 docs per query
         for b_itx, batch in enumerate(eval_batches):
             if b_itx == t:
@@ -251,7 +251,7 @@ class Model(object):
             pred_logits = self.model(QIDS, UIDS, VIDS, CLICKS)
             loss, loss_list = self.compute_loss(pred_logits, batch['clicks'])
             tmp_num, tmp_perplexity_at_rank = self.compute_perplexity(pred_logits, batch['clicks'])
-            perplexty_num += tmp_num
+            perplexity_num += tmp_num
             perplexity_at_rank = [perplexity_at_rank[i] + tmp_perplexity_at_rank[i] for i in range(10)]
             # total_loss_list += loss_list
             # pred_logits_list = pred_logits.data.cpu().numpy().tolist()
@@ -270,7 +270,7 @@ class Model(object):
             self.logger.info('Saving {} results to {}'.format(result_prefix, result_file))
 
         # this average loss is invalid on test set, since we don't have true start_id and end_id
-        assert total_num == perplexty_num
+        assert total_num == perplexity_num
         ave_span_loss = 1.0 * total_loss / total_num
         perplexity_at_rank = [2 ** (-x / total_num) for x in perplexity_at_rank]
         perplexity = sum(perplexity_at_rank) / len(perplexity_at_rank)
