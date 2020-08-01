@@ -2,7 +2,3 @@ __pycache__
 .vscode
 data
 outputs
-outputs_batch1
-*.err
-*.out
-*.sh
