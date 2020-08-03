@@ -180,9 +180,6 @@ def rank(args):
     for data_path in args.train_dirs + args.dev_dirs + args.test_dirs:
         assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
     dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs)
-    #pprint.pprint(dataset.query_qid)
-    #pprint.pprint(dataset.url_uid)
-    #pprint.pprint(dataset.uid_vid)
     logger.info('Initialize the model...')
     model = Model(args, len(dataset.qid_query), len(dataset.uid_url), len(dataset.vid_vtype))
     logger.info('model.global_step: {}'.format(model.global_step))
@@ -200,7 +197,7 @@ def rank(args):
 
 def run():
     """
-     Prepares and runs the whole system.
+    Prepares and runs the whole system.
     """
     # get arguments
     args = parse_args()
@@ -228,12 +225,8 @@ def run():
 
     logger.info('Running with args : {}'.format(args))
 
-    # os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-    # os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
-
     logger.info('Checking the directories...')
     for dir_path in [args.model_dir, args.result_dir, args.summary_dir]:
-        # [args.vocab_dir, args.model_dir, args.result_dir, args.summary_dir]:
         if not os.path.exists(dir_path):
             os.makedirs(dir_path)
     

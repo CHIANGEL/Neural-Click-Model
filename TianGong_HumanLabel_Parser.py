@@ -3,9 +3,9 @@ import logging
 
 class TianGong_HumanLabel_Parser:
     """
-     A parser for the human_label.txt provided by TianGong-ST
-     Return:
-      - relevance_queries: information per query in human_label.txt
+    A parser for the human_label.txt provided by TianGong-ST
+    Return:
+        - relevance_queries: information per query in human_label.txt
     """
 
     @staticmethod

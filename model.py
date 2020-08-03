@@ -1,26 +1,3 @@
-# -*- coding:utf8 -*-
-# ==============================================================================
-# Copyright 2017 Baidu.com, Inc. All Rights Reserved
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#    http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ==============================================================================
-"""
-This module implements the reading comprehension models based on:
-1. the BiDAF algorithm described in https://arxiv.org/abs/1611.01603
-2. the Match-LSTM algorithm described in https://openreview.net/pdf?id=B1-q5Pqxl
-Note that we use Pointer Network for the decoding stage of both models.
-"""
-
 import os
 import time
 import logging
@@ -37,7 +14,6 @@ from tensorboardX import SummaryWriter
 from torch import nn
 from ndcg import RelevanceEstimator
 from TianGong_HumanLabel_Parser import TianGong_HumanLabel_Parser
-# from utils import calc_metrics
 use_cuda = torch.cuda.is_available()
 
 MINF = 1e-30
@@ -47,12 +23,11 @@ class Model(object):
     Implements the main reading comprehension model.
     """
     def __init__(self, args, query_size, doc_size, vtype_size):
-        self.args = args
-
         # logging
         self.logger = logging.getLogger("NCM")
 
         # basic config
+        self.args = args
         self.hidden_size = args.hidden_size
         self.optim_type = args.optim
         self.learning_rate = args.learning_rate
@@ -65,13 +40,12 @@ class Model(object):
         if args.train:
             self.writer = SummaryWriter(self.args.summary_dir)
 
+        # network
         self.model = Network(self.args, query_size, doc_size, vtype_size)
-
         if args.data_parallel:
             self.model = nn.DataParallel(self.model)
         if use_cuda:
             self.model = self.model.cuda()
-
         self.optimizer = self.create_train_op()
         self.criterion = nn.MSELoss()
         
@@ -80,7 +54,6 @@ class Model(object):
         self.relevance_estimatior = RelevanceEstimator(args.minimum_occurrence)
         self.trunc_levels = [1, 3, 5, 10]
 
-    # loss
     def compute_loss(self, pred_scores, target_scores):
         """
         The loss function
@@ -99,7 +72,6 @@ class Model(object):
             loss_list.append(loss.data[0])
             total_loss += loss
         total_loss /= cnt
-        # print loss.data[0]
         return total_loss, loss_list
 
     def create_train_op(self):
@@ -128,9 +100,6 @@ class Model(object):
     def _train_epoch(self, train_batches, data, max_metric_value, metric_save, patience, step_pbar):
         """
         Trains the model for a single epoch.
-        Args:
-            train_batches: iterable batch data for training
-            dropout_keep_prob: float value indicating dropout keep probability
         """
         evaluate = True
         exit_tag = False
@@ -170,11 +139,7 @@ class Model(object):
                     self.writer.add_scalar("dev/perplexity", perplexity, self.global_step)
                     self.writer.add_scalar("test/loss", eval_loss1, self.global_step)
                     self.writer.add_scalar("test/perplexity", perplexity1, self.global_step)
-                    # for metric in ['ndcg@1', 'ndcg@3', 'ndcg@10', 'ndcg@20']:
-                    #     self.writer.add_scalar("dev/{}".format(metric), metrics['{}'.format(metric)], self.global_step)
-                    # if metrics['ndcg@10'] > max_metric_value:
-                    #     self.save_model(save_dir, save_prefix+'_best')
-                    #     max_metric_value = metrics['ndcg@10']
+
                     for trunc_level in self.trunc_levels:
                         ndcg_version1, ndcg_version2 = self.relevance_estimatior.evaluate(self, data, self.relevance_queries, trunc_level)
                         self.writer.add_scalar("NDCG_version1/{}".format(trunc_level), ndcg_version1, self.global_step)
@@ -203,7 +168,6 @@ class Model(object):
 
     def train(self, data):
         max_metric_value, epoch, patience, metric_save = 0., 0, 0, 1e10
-        # 进度条
         step_pbar = tqdm(total=self.args.num_steps)
         exit_tag = False
         self.writer.add_scalar('train/lr', self.learning_rate, self.global_step)
@@ -216,7 +180,7 @@ class Model(object):
 
     def compute_perplexity(self, pred_scores, target_scores):
         '''
-         Compute the perplexity
+        Compute the perplexity
         '''
         perplexity_at_rank = [0.0] * 10 # 10 docs per query
         total_num = 0
@@ -231,7 +195,6 @@ class Model(object):
 
     def evaluate(self, eval_batches, dataset, result_dir=None, result_prefix=None, t=-1):
         eval_ouput = []
-        # total_loss_list = []
         total_loss, total_num = 0., 0
         perplexity_num = 0
         perplexity_at_rank = [0.0] * 10 # 10 docs per query
@@ -257,7 +220,7 @@ class Model(object):
             # pred_logits_list = pred_logits.data.cpu().numpy().tolist()
             for pred_metric, data, pred_logit in zip(loss_list, batch['raw_data'], pred_logits.data.cpu().numpy().tolist()):
                 eval_ouput.append([data['session_id'], data['query'],
-                                   data['urls'][1:], data['vtypes'][1:], data['clicks'][2:], pred_logit, pred_metric])
+                                    data['urls'][1:], data['vtypes'][1:], data['clicks'][2:], pred_logit, pred_metric])
             total_loss += loss.data[0] * len(batch['raw_data'])
             total_num += len(batch['raw_data'])
 
@@ -269,15 +232,11 @@ class Model(object):
 
             self.logger.info('Saving {} results to {}'.format(result_prefix, result_file))
 
-        # this average loss is invalid on test set, since we don't have true start_id and end_id
         assert total_num == perplexity_num
         ave_span_loss = 1.0 * total_loss / total_num
-        perplexity_at_rank = [2 ** (-x / total_num) for x in perplexity_at_rank]
+        perplexity_at_rank = [2 ** (-x / perplexity_num) for x in perplexity_at_rank]
         perplexity = sum(perplexity_at_rank) / len(perplexity_at_rank)
-        # compute the bleu and rouge scores if reference answers is provided
-        # metrics = self.cal_metrics(eval_ouput)
-        # print metrics
-        return ave_span_loss, perplexity, perplexity_at_rank # , np.mean(total_loss_list)
+        return ave_span_loss, perplexity, perplexity_at_rank
     
     def predict_relevance(self, qid, uid, vid):
         qids = [[qid, qid]]
@@ -300,9 +259,7 @@ class Model(object):
         """
         torch.save(self.model.state_dict(), os.path.join(model_dir, model_prefix+'_{}.model'.format(self.global_step)))
         torch.save(self.optimizer.state_dict(), os.path.join(model_dir, model_prefix + '_{}.optimizer'.format(self.global_step)))
-        self.logger.info('Model and optimizer saved in {}, with prefix {} and global step {}.'.format(model_dir,
-                                                                                                      model_prefix,
-                                                                                                      self.global_step))
+        self.logger.info('Model and optimizer saved in {}, with prefix {} and global step {}.'.format(model_dir, model_prefix, self.global_step))
 
     def load_model(self, model_dir, model_prefix, global_step):
         """
@@ -313,9 +270,7 @@ class Model(object):
             optimizer_path = os.path.join(model_dir, model_prefix + '_best_{}.optimizer'.format(global_step))
         if os.path.isfile(optimizer_path):
             self.optimizer.load_state_dict(torch.load(optimizer_path))
-            self.logger.info('Optimizer restored from {}, with prefix {} and global step {}.'.format(model_dir,
-                                                                                                     model_prefix,
-                                                                                                     global_step))
+            self.logger.info('Optimizer restored from {}, with prefix {} and global step {}.'.format(model_dir, model_prefix, global_step))
         model_path = os.path.join(model_dir, model_prefix + '_{}.model'.format(global_step))
         if not os.path.isfile(model_path):
             model_path = os.path.join(model_dir, model_prefix + '_best_{}.model'.format(global_step))
