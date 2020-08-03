@@ -65,45 +65,45 @@ def parse_args():
 
     path_settings = parser.add_argument_group('path settings')
     path_settings.add_argument('--train_dirs', nargs='+',
-                               default=['./data/TianGong-ST/train_per_query.txt'],
-                               help='list of dirs that contain the preprocessed train data')
+                                default=['./data/TianGong-ST/train_per_query.txt'],
+                                help='list of dirs that contain the preprocessed train data')
     path_settings.add_argument('--dev_dirs', nargs='+',
-                               default=['./data/TianGong-ST/dev_per_query.txt'],
-                               help='list of dirs that contain the preprocessed dev data')
+                                default=['./data/TianGong-ST/dev_per_query.txt'],
+                                help='list of dirs that contain the preprocessed dev data')
     path_settings.add_argument('--test_dirs', nargs='+',
-                               default=['./data/TianGong-ST/test_per_query.txt'],
-                               help='list of dirs that contain the preprocessed test data')
+                                default=['./data/TianGong-ST/test_per_query.txt'],
+                                help='list of dirs that contain the preprocessed test data')
     path_settings.add_argument('--human_label_dir', default='./data/TianGong-ST/human_label.txt',
-                               help='the dir to Human Label txt file')
+                                help='the dir to Human Label txt file')
     path_settings.add_argument('--model_dir', default='./outputs/models/',
-                               help='the dir to store models')
+                                help='the dir to store models')
     path_settings.add_argument('--result_dir', default='./outputs/results/',
-                               help='the dir to output the results')
+                                help='the dir to output the results')
     path_settings.add_argument('--summary_dir', default='./outputs/summary/',
-                               help='the dir to write tensorboard summary')
+                                help='the dir to write tensorboard summary')
     path_settings.add_argument('--log_dir', default='./outputs/log/',
-                               help='path of the log file. If not set, logs are printed to console')
+                                help='path of the log file. If not set, logs are printed to console')
 
     path_settings.add_argument('--eval_freq', type=int, default=2000,
-                               help='the frequency of evaluating on the dev set when training')
+                                help='the frequency of evaluating on the dev set when training')
     path_settings.add_argument('--check_point', type=int, default=2000,
-                               help='the frequency of saving model')
+                                help='the frequency of saving model')
     path_settings.add_argument('--patience', type=int, default=3,
-                               help='lr half when more than the patience times of evaluation\' loss don\'t decrease')
+                                help='lr half when more than the patience times of evaluation\' loss don\'t decrease')
     path_settings.add_argument('--lr_decay', type=float, default=0.5,
-                               help='lr decay')
+                                help='lr decay')
     path_settings.add_argument('--load_model', type=int, default=-1,
-                               help='load model global step')
+                                help='load model global step')
     path_settings.add_argument('--data_parallel', type=bool, default=False,
-                               help='data_parallel')
+                                help='data_parallel')
     path_settings.add_argument('--gpu_num', type=int, default=1,
-                               help='gpu_num')
+                                help='gpu_num')
 
     return parser.parse_args()
 
 def train(args):
     """
-     trains the model
+    trains the model
     """
     logger = logging.getLogger("NCM")
     logger.info('Checking the data files...')
@@ -123,7 +123,7 @@ def train(args):
 
 def evaluate(args):
     """
-     compute perplexity and log-likelihood for dev file
+    compute perplexity and log-likelihood for dev file
     """
     logger = logging.getLogger("NCM")
     logger.info('Checking the data files...')
@@ -148,7 +148,7 @@ def evaluate(args):
 
 def predict(args):
     """
-     compute perplexity and log-likelihood for test file
+    compute perplexity and log-likelihood for test file
     """
     logger = logging.getLogger("NCM")
     logger.info('Checking the data files...')
@@ -173,7 +173,7 @@ def predict(args):
 
 def rank(args):
     """
-     ranking performance on test files
+    ranking performance on test files
     """
     logger = logging.getLogger("NCM")
     logger.info('Checking the data files...')

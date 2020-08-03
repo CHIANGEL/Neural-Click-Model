@@ -28,7 +28,7 @@ class Network(nn.Module):
         self.action_embedding = nn.Embedding(2, self.embed_size//2)
 
         self.gru = nn.GRU(self.embed_size*3, self.hidden_size,
-                          batch_first=True, dropout=self.dropout_rate, num_layers=self.encode_gru_num_layer)
+                            batch_first=True, dropout=self.dropout_rate, num_layers=self.encode_gru_num_layer)
         self.dropout = nn.Dropout(p=self.dropout_rate)
         self.output_linear = nn.Linear(self.hidden_size, 1)
         self.sigmoid = nn.Sigmoid()
