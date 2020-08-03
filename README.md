@@ -1,19 +1,19 @@
-# A Pytorch Implementation of Neural Click Model (NCM)
+## A Pytorch Implementation of Neural Click Model (NCM)
 
-## Introduction
+### Introduction
 
 This is an non-official implementation of Neural Click Model proposed in the paper: [A Neural Click Model for Web Search. WWW 2016](https://dl.acm.org/doi/10.1145/2872427.2883033).
 
 **NOTE**: The original paper use one-hot encoding for query/doc embeddings. This makes the embedding dimensionality up to 10240, which is too large for training on GPU efficiently. So here I use nn.embedding provided by PyTorch to constrain the dimensionality.
 
-## Requirements
+### Requirements
 
 - python 3.7
 - pytorch 1.4.0
 - tensorboardx 2.0
 - tqdm 4.44.1
 
-## Dataset
+### Dataset
 
 I use [TianGong-ST dataset](http://www.thuir.cn/tiangong-st/) provided by Sougou and Tsinghua University. This Chinese-centric TianGong-ST dataset is provided to support researches in a wide range of session-level Information Retrieval (IR) tasks. It consists of 147,155 refined Web search sessions, 40,596 unique queries, 297,597 Web pages, six kinds of weak relevance labels assessed by click models, and also a subset of 2,000 sessions with 5-level human relevance labels for documents of the last queries in them. In order to align with the experiment conducted on [CACM](https://github.com/CHIANGEL/Context-Aware-Click-Model), division of the datset is:
 
@@ -23,7 +23,7 @@ I use [TianGong-ST dataset](http://www.thuir.cn/tiangong-st/) provided by Sougou
 | Queries             | 35903 | 9373 | 11391 |
 | Avg Session Len     |    2.4099 |  2.4012  |   2.4986 |
 
-## Input Formats & Data Preparation
+### Input Formats & Data Preparation
 
 I provide python files for data pre-processing:
 
@@ -41,7 +41,7 @@ The format of human_label.txt remains the same in TianGong-ST dataset:
 
 - Each line: ```<sample id><tab><session id><tab><query id><tab><document id><tab><relevance label><tab><page validation>```
 
-## Recommended Hyperparameter for TianGong-ST
+### Recommended Hyperparameter for TianGong-ST
 
 I provide a [example_run.sh](example_run.sh) for training. The hyperparamemter is:
 
