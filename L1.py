@@ -19,6 +19,8 @@ def parse_args():
                         help='The path the click sequence file')
     parser.add_argument('--plot_label', nargs='+',
                         help='The label of the plot')
+    parser.add_argument('--file_name', type=str, default='L1.png',
+                        help='The label of the plot')
     return parser.parse_args()
 
 if __name__ == '__main__':
@@ -41,15 +43,15 @@ if __name__ == '__main__':
                 L1s[idx][i] += int(pred_clicks[i] != true_clicks[i])
             cnt += 1
         for i in range(10):
-            L1s[idx][i] /= cnt
+            L1s[idx][i] = -math.log(L1s[idx][i] / cnt)
         L1 = sum(L1s[idx]) / 10
         print('{}, {}'.format(L1s[idx], L1))
     
     plt.figure()
-    colors = ['red', 'blue']
+    colors = ['red', 'blue', 'orange', 'green']
     for idx, plot_label in enumerate(args.plot_label):
         plt.plot(range(1, 11), L1s[idx], marker='o', color=colors[idx], label=plot_label)
     plt.legend()
     plt.xlabel('Rank')
     plt.ylabel('Avg L1 distance')
-    plt.savefig('L1.png')
+    plt.savefig('{}.png'.format(args.file_name))
