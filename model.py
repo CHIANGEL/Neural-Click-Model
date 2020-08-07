@@ -14,6 +14,8 @@ from tensorboardX import SummaryWriter
 from torch import nn
 from ndcg import RelevanceEstimator
 from TianGong_HumanLabel_Parser import TianGong_HumanLabel_Parser
+from utils import *
+
 use_cuda = torch.cuda.is_available()
 
 MINF = 1e-30
@@ -119,7 +121,7 @@ class Model(object):
 
             self.model.train()
             self.optimizer.zero_grad()
-            pred_logits = self.model(QIDS, UIDS, VIDS, CLICKS)
+            pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
             loss, loss_list = self.compute_loss(pred_logits, batch['clicks'])
             loss.backward()
             self.optimizer.step()
@@ -211,7 +213,7 @@ class Model(object):
                 QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
 
             self.model.eval()
-            pred_logits = self.model(QIDS, UIDS, VIDS, CLICKS)
+            pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
             loss, loss_list = self.compute_loss(pred_logits, batch['clicks'])
             tmp_num, tmp_perplexity_at_rank = self.compute_perplexity(pred_logits, batch['clicks'])
             perplexity_num += tmp_num
@@ -250,8 +252,74 @@ class Model(object):
         if use_cuda:
             QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
         self.model.eval()
-        pred_logits = self.model(QIDS, UIDS, VIDS, CLICKS)
+        pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
         return pred_logits[0][0]
+
+    def generate_click_seq(self, eval_batches, file_path, file_name):
+        logit_list_for_print = []
+        click_list_for_print = []
+        true_click_list_for_print = []
+        check_path(file_path)
+        data_path = os.path.join(file_path, file_name)
+        file = open(data_path, 'w')
+        for b_itx, batch in enumerate(eval_batches):
+            if b_itx % 5000 == 0:
+                self.logger.info('Generating click sequence at step: {}.'.format(b_itx))
+            QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
+            UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
+            VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
+            CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64)))
+            if use_cuda:
+                QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
+
+            self.model.eval()
+            gru_state = Variable(torch.zeros(1, self.args.batch_size, self.hidden_size))
+            CLICK_ = torch.zeros(self.args.batch_size, 1, dtype=CLICKS.dtype)
+            if use_cuda:
+                gru_state, CLICK_ = gru_state.cuda(), CLICK_.cuda()
+            logit_list = []
+            click_list = []
+            for i in range(self.max_d_num + 1):
+                logit, gru_state = self.model(QIDS[:, i:i+1], UIDS[:, i:i+1], VIDS[:, i:i+1], CLICK_ , gru_state=gru_state)
+                if i > 0:
+                    CLICK_ = (logit > 0.5).type(CLICKS.dtype)
+                    logit_list.append(logit)
+                    click_list.append(CLICK_)
+            
+            logits = torch.cat(logit_list, dim=1).cpu().detach().numpy().tolist()
+            CLICKS_ = torch.cat(click_list, dim=1).cpu().numpy().tolist()
+            CLICKS = CLICKS[:, 2:].cpu().numpy().tolist()
+            assert len(CLICKS[0]) == 10
+            
+            for logit, CLICK_, CLICK in zip(logits, CLICKS_, CLICKS):
+                file.write('{}\t{}\t{}\n'.format(str(logit), str(CLICK_), str(CLICK)))
+
+    def generate_click_seq_cheat(self, eval_batches, file_path, file_name):
+        logit_list_for_print = []
+        click_list_for_print = []
+        true_click_list_for_print = []
+        check_path(file_path)
+        data_path = os.path.join(file_path, file_name)
+        file = open(data_path, 'w')
+        for b_itx, batch in enumerate(eval_batches):
+            if b_itx % 5000 == 0:
+                self.logger.info('Generating click sequence at step: {}.'.format(b_itx))
+            QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
+            UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
+            VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
+            CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:, :-1])
+            true_clicks = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64)))
+            if use_cuda:
+                QIDS, UIDS, VIDS, CLICKS, true_clicks = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda(), true_clicks.cuda()
+
+            self.model.eval()
+            pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
+            pred_clicks = (pred_logits > 0.5).type(true_clicks.dtype).cpu().numpy().tolist()
+            pred_logits = pred_logits.detach().cpu().numpy().tolist()
+            true_clicks = true_clicks[:, 2:].cpu().numpy().tolist()
+            
+            for logit, pred_click, true_click in zip(pred_logits, pred_clicks, true_clicks):
+                file.write('{}\t{}\t{}\n'.format(str(logit), str(pred_click), str(true_click)))
 
     def save_model(self, model_dir, model_prefix):
         """

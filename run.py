@@ -26,6 +26,10 @@ def parse_args():
                         help='predict the answers for test set with trained model')
     parser.add_argument('--rank', action='store_true',
                         help='rank on train set')
+    parser.add_argument('--generate_click_seq', action='store_true',
+                        help='generate click sequence based on model itself')
+    parser.add_argument('--generate_click_seq_cheat', action='store_true',
+                        help='generate click sequence based on ground truth data')
     parser.add_argument('--gpu', type=str, default='',
                         help='specify gpu device')
 
@@ -195,6 +199,50 @@ def rank(args):
         logger.info("NDCG@{}: {}, {}".format(trunc_level, ndcg_version1, ndcg_version2))
     logger.info('【{}, {}】'.format(args.load_model, args.minimum_occurrence))
 
+def generate_click_seq(args):
+    """
+    generate the click sequence for test file based on model itself
+    """
+    logger = logging.getLogger("NCM")
+    logger.info('Checking the data files...')
+    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs:
+        assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
+    assert len(args.test_dirs) > 0, 'No test files are provided.'
+    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs)
+    logger.info('Initialize the model...')
+    model = Model(args, len(dataset.qid_query), len(dataset.uid_url), len(dataset.vid_vtype))
+    logger.info('model.global_step: {}'.format(model.global_step))
+    assert args.load_model > -1
+    logger.info('Restoring the model...')
+    model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
+    logger.info('Generating click sequence based on the model itself...')
+    test_batches = dataset.gen_mini_batches('test', args.batch_size, shuffle=False)
+    file_path = os.path.join(args.model_dir, '..', 'click_seq')
+    model.generate_click_seq(test_batches, file_path, '{}.txt'.format(time.strftime('%Y-%m-%d-%H:%M:%S',time.localtime(time.time()))))
+    logger.info('Done with click sequence generation.')
+    
+def generate_click_seq_cheat(args):
+    """
+    generate the click sequence for test file based on ground truth data
+    """
+    logger = logging.getLogger("NCM")
+    logger.info('Checking the data files...')
+    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs:
+        assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
+    assert len(args.test_dirs) > 0, 'No test files are provided.'
+    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs)
+    logger.info('Initialize the model...')
+    model = Model(args, len(dataset.qid_query), len(dataset.uid_url), len(dataset.vid_vtype))
+    logger.info('model.global_step: {}'.format(model.global_step))
+    assert args.load_model > -1
+    logger.info('Restoring the model...')
+    model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
+    logger.info('Generating click sequence based on the model itself...')
+    test_batches = dataset.gen_mini_batches('test', args.batch_size, shuffle=False)
+    file_path = os.path.join(args.model_dir, '..', 'click_seq')
+    model.generate_click_seq_cheat(test_batches, file_path, '{}.txt'.format(time.strftime('%Y-%m-%d-%H:%M:%S',time.localtime(time.time()))))
+    logger.info('Done with click sequence generation.')
+
 def run():
     """
     Prepares and runs the whole system.
@@ -238,6 +286,10 @@ def run():
         predict(args)
     if args.rank:
         rank(args)
+    if args.generate_click_seq:
+        generate_click_seq(args)
+    if args.generate_click_seq_cheat:
+        generate_click_seq_cheat(args)
     logger.info('run done.')
 
 if __name__ == '__main__':
