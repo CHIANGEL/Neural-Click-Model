@@ -192,10 +192,10 @@ def rank(args):
     model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
     logger.info('Compute NDCG on test files...')
     relevance_queries = TianGong_HumanLabel_Parser().parse(args.human_label_dir)
-    relevance_estimatior = RelevanceEstimator(args.minimum_occurrence)
+    relevance_estimator = RelevanceEstimator(args.minimum_occurrence)
     trunc_levels = [1, 3, 5, 10]
     for trunc_level in trunc_levels:
-        ndcg_version1, ndcg_version2 = relevance_estimatior.evaluate(model, dataset, relevance_queries, trunc_level)
+        ndcg_version1, ndcg_version2 = relevance_estimator.evaluate(model, dataset, relevance_queries, trunc_level)
         logger.info("NDCG@{}: {}, {}".format(trunc_level, ndcg_version1, ndcg_version2))
     logger.info('【{}, {}】'.format(args.load_model, args.minimum_occurrence))
 

@@ -53,7 +53,7 @@ class Model(object):
         
         # for NDCG@k
         self.relevance_queries = TianGong_HumanLabel_Parser().parse(args.human_label_dir)
-        self.relevance_estimatior = RelevanceEstimator(args.minimum_occurrence)
+        self.relevance_estimator = RelevanceEstimator(args.minimum_occurrence)
         self.trunc_levels = [1, 3, 5, 10]
 
     def compute_loss(self, pred_scores, target_scores):
@@ -143,7 +143,7 @@ class Model(object):
                     self.writer.add_scalar("test/perplexity", perplexity1, self.global_step)
 
                     for trunc_level in self.trunc_levels:
-                        ndcg_version1, ndcg_version2 = self.relevance_estimatior.evaluate(self, data, self.relevance_queries, trunc_level)
+                        ndcg_version1, ndcg_version2 = self.relevance_estimator.evaluate(self, data, self.relevance_queries, trunc_level)
                         self.writer.add_scalar("NDCG_version1/{}".format(trunc_level), ndcg_version1, self.global_step)
                         self.writer.add_scalar("NDCG_version2/{}".format(trunc_level), ndcg_version2, self.global_step)
 
