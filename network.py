@@ -33,7 +33,7 @@ class Network(nn.Module):
         self.output_linear = nn.Linear(self.hidden_size, 1)
         self.sigmoid = nn.Sigmoid()
 
-    def forward(self, query, doc, vtype, action):
+    def forward(self, query, doc, vtype, action, gru_state=None):
         batch_size = query.size()[0]
         max_doc_num = doc.size()[1]
 
@@ -43,11 +43,14 @@ class Network(nn.Module):
         action_embed = self.action_embedding(action)  # [batch_size, 11, embed_size // 2]
 
         gru_input = torch.cat((query_embed, doc_embed, vtype_embed, action_embed), dim=2)
-        init_gru_state = Variable(torch.zeros(1, batch_size, self.hidden_size))
+        if gru_state == None:
+            gru_state = Variable(torch.zeros(1, batch_size, self.hidden_size))
         if use_cuda:
-            init_gru_state = init_gru_state.cuda()
-        outputs, _ = self.gru(gru_input, init_gru_state)
+            gru_state = gru_state.cuda()
+        outputs, gru_state = self.gru(gru_input, gru_state)
         outputs = self.dropout(outputs)
-        logits = self.sigmoid(self.output_linear(outputs)).view(batch_size, max_doc_num)[:, 1:]
-        return logits
+        logits = self.sigmoid(self.output_linear(outputs)).view(batch_size, max_doc_num)
+        if logits.shape[1] > 1:
+            logits = logits[:, 1:]
+        return logits, gru_state
 
