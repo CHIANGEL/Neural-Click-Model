@@ -323,13 +323,76 @@ def generate_ncm_txt(args):
     print('  - {}'.format('write {} lines'.format(write_line_count)))
     print('  - {}'.format('finish reading from human_label.txt...'))
 
+def generate_human_label_txt_for_NCM(args):
+    print('  - {}'.format('loading infos_per_session.list'))
+    infos_per_session = load_list(args.output, 'infos_per_session.list')
+    
+    print('  - {}'.format('parse human_label.txt and generate relevance queries'))
+    label_reader = open(os.path.join(args.output, 'human_label.txt'), "r")
+    relevance_queries = []
+    query_count = dict()
+    previous_id = -1
+    cnt = 0
+    for line in label_reader:
+        entry_array = line.strip().split()
+        id = int(entry_array[0])
+        task = int(entry_array[1])
+        query = int(entry_array[2])
+        result = int(entry_array[3])
+        relevance = int(entry_array[4])
+        
+        # count query-doc pairs
+        if not query in query_count:
+            query_count[query] = dict()
+            query_count[query][result] = 1
+        elif not result in query_count[query]:
+            query_count[query][result] = 1
+        else:
+            query_count[query][result] += 1
+
+        # The first line of a sample query
+        if id != previous_id:
+            info_per_query = dict()
+            info_per_query['id'] = id
+            info_per_query['sid'] = task
+            info_per_query['qid'] = query
+            info_per_query['uids'] = [result]
+            info_per_query['relevances'] = [relevance]
+            relevance_queries.append(info_per_query)
+            cnt += 1
+            previous_id = id
+        
+        # The rest lines of a query
+        else:
+            relevance_queries[-1]['uids'].append(result)
+            relevance_queries[-1]['relevances'].append(relevance)
+            cnt += 1
+    tmp = 0
+    for key in query_count:
+        for x in query_count[key]:
+            tmp += query_count[key][x]
+    assert tmp == 20000
+    assert cnt == 20000
+    print('  - num of queries in human_label.txt: {}'.format(len(relevance_queries)))
+    
+    print('  - {}'.format('saving the relevance queries'))
+    save_list(args.output, 'relevance_queries.list', relevance_queries)
+    list1 = load_list(args.output, 'relevance_queries.list')
+    assert len(relevance_queries) == len(list1)
+    for idx, item in enumerate(relevance_queries):
+        assert item == list1[idx]
+    
+    # NOTE: need to resort the doc within a query to get the click infos
+    generate_data_per_query_for_human_label(relevance_queries, infos_per_session, np.arange(0, len(relevance_queries)), args.output, 'human_label_for_NCM.txt')
+
+
 def main():
     parser = argparse.ArgumentParser('TianGong-ST')
     parser.add_argument('--dataset', default='sogousessiontrack2020.xml',
                         help='dataset name')
     parser.add_argument('--input', default='../dataset/TianGong-ST/data/',
                         help='input path')
-    parser.add_argument('--output', default='./data/version6',
+    parser.add_argument('--output', default='./data/',
                         help='output path')
     parser.add_argument('--xml_clean', action='store_true',
                         help='remove useless lines in xml files, to reduce the size of xml file')
@@ -337,6 +400,8 @@ def main():
                         help='generate dicts and lists for info_per_session/info_per_query')
     parser.add_argument('--ncm_txt', action='store_true',
                         help='generate NCM data txt')
+    parser.add_argument('--human_label_txt_for_NCM', action='store_true',
+                        help='generate human_label_txt_for_NCM.txt')
     parser.add_argument('--trainset_ratio', default=0.8,
                         help='ratio of the train session/query according to the total number of sessions/queries')
     parser.add_argument('--devset_ratio', default=0.1,
@@ -355,6 +420,10 @@ def main():
         # load lists saved by generate_dict_list() and generates train.txt & dev.txt & test.txt
         print('===> {}'.format('generating train & dev & test data txt...'))
         generate_ncm_txt(args)
+    if args.human_label_txt_for_NCM:
+        # generate human label txt for NCM
+        print('===> {}'.format('generating human label txt for NCM...'))
+        generate_human_label_txt_for_NCM(args)
     print('===> {}'.format('Done.'))
     
 if __name__ == '__main__':
