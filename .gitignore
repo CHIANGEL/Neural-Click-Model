@@ -3,6 +3,7 @@ __pycache__
 data
 outputs
 adam*
+NCM*
 *.png
 *.sh
 *.err
