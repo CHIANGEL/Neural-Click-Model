@@ -254,6 +254,88 @@ class Model(object):
         self.model.eval()
         pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
         return pred_logits[0][0]
+    
+    def ndcg_cheat(self, label_batches, data, result_dir=None, result_prefix=None, stop=-1):
+        trunc_levels = [1, 3, 5, 10]
+        ndcg_version1, ndcg_version2 = {}, {}
+        useless_session, cnt_version1, cnt_version2 = {}, {}, {}
+        for k in trunc_levels:
+            ndcg_version1[k] = 0.0
+            ndcg_version2[k] = 0.0
+            useless_session[k] = 0
+            cnt_version1[k] = 0
+            cnt_version2[k] = 0
+        with torch.no_grad():
+            for b_itx, batch in enumerate(label_batches):
+                if b_itx == stop:
+                    break
+
+                QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
+                UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
+                VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
+                CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:, :-1])
+                true_relevances = batch['relevances'][0]
+                if use_cuda:
+                    QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
+
+                self.model.eval()
+                pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
+                relevances = pred_logits.data.cpu().numpy().reshape(-1).tolist()
+                pred_rels = {}
+                for idx, relevance in enumerate(relevances):
+                    pred_rels[idx] = relevance
+                
+                #print('{}: \n{}'.format('relevances', relevances))
+                #print('{}: \n{}'.format('true_relevances', true_relevances))
+                #print('{}: \n{}'.format('pred_rels', pred_rels))
+                for k in trunc_levels:
+                    #print('\n{}: {}'.format('trunc_level', k))
+                    ideal_ranking_relevances = sorted(true_relevances, reverse=True)[:k]
+                    ranking = sorted([idx for idx in pred_rels], key = lambda idx : pred_rels[idx], reverse=True)
+                    ranking_relevances = [true_relevances[idx] for idx in ranking[:k]]
+                    #print('{}: {}'.format('ideal_ranking_relevances', ideal_ranking_relevances))
+                    #print('{}: {}'.format('ranking', ranking))
+                    #print('{}: {}'.format('ranking_relevances', ranking_relevances))
+                    dcg = self.dcg(ranking_relevances)
+                    idcg = self.dcg(ideal_ranking_relevances)
+                    if dcg > idcg:
+                        pprint.pprint(ranking_relevances)
+                        pprint.pprint(ideal_ranking_relevances)
+                        pprint.pprint(dcg)
+                        pprint.pprint(idcg)
+                        pprint.pprint(info_per_query)
+                        assert 0
+                    ndcg = dcg / idcg if idcg > 0 else 1.0
+                    if idcg == 0:
+                        useless_session[k] += 1
+                        cnt_version2[k] += 1
+                        ndcg_version2[k] += ndcg
+                    else:
+                        ndcg = dcg / idcg
+                        cnt_version1[k] += 1
+                        cnt_version2[k] += 1
+                        ndcg_version1[k] += ndcg
+                        ndcg_version2[k] += ndcg
+                    #print('{}: {}'.format('dcg', dcg))
+                    #print('{}: {}'.format('idcg', idcg))
+                    #print('{}: {}'.format('ndcg', ndcg))
+            '''for k in trunc_levels:
+                print()
+                print('{}: {}'.format('cnt_version1[{}]'.format(k), cnt_version1[k]))
+                print('{}: {}'.format('useless_session[{}]'.format(k), useless_session[k]))
+                print('{}: {}'.format('cnt_version2[{}]'.format(k), cnt_version2[k]))'''
+            for k in trunc_levels:
+                assert cnt_version1[k] + useless_session[k] == 2000
+                assert cnt_version2[k] == 2000
+                ndcg_version1[k] /= cnt_version1[k]
+                ndcg_version2[k] /= cnt_version2[k]
+        return ndcg_version1, ndcg_version2
+
+    def dcg(self, ranking_relevances):
+        """
+        Computes the DCG for a given ranking_relevances
+        """
+        return sum([(2 ** relevance - 1) / math.log(rank + 2, 2) for rank, relevance in enumerate(ranking_relevances)])
 
     def generate_click_seq(self, eval_batches, file_path, file_name):
         logit_list_for_print = []

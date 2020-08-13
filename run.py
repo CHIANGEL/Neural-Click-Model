@@ -26,6 +26,8 @@ def parse_args():
                         help='predict the answers for test set with trained model')
     parser.add_argument('--rank', action='store_true',
                         help='rank on train set')
+    parser.add_argument('--rank_cheat', action='store_true',
+                        help='rank on train set in a cheating way')
     parser.add_argument('--generate_click_seq', action='store_true',
                         help='generate click sequence based on model itself')
     parser.add_argument('--generate_click_seq_cheat', action='store_true',
@@ -54,6 +56,8 @@ def parse_args():
                                 help='number of dev files')
     train_settings.add_argument('--num_test_files', type=int, default=1,
                                 help='number of test files')
+    train_settings.add_argument('--num_label_files', type=int, default=1,
+                                help='number of label files')
     train_settings.add_argument('--minimum_occurrence', type=int, default=1,
                                 help='minimum_occurrence for NDCG')
 
@@ -77,6 +81,9 @@ def parse_args():
     path_settings.add_argument('--test_dirs', nargs='+',
                                 default=['./data/TianGong-ST/test_per_query.txt'],
                                 help='list of dirs that contain the preprocessed test data')
+    path_settings.add_argument('--label_dirs', nargs='+',
+                                default=['data/TianGong-ST/human_label_for_NCM.txt'],
+                                help='list of dirs that contain the preprocessed label data')
     path_settings.add_argument('--human_label_dir', default='./data/TianGong-ST/human_label.txt',
                                 help='the dir to Human Label txt file')
     path_settings.add_argument('--model_dir', default='./outputs/models/',
@@ -111,10 +118,10 @@ def train(args):
     """
     logger = logging.getLogger("NCM")
     logger.info('Checking the data files...')
-    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs:
+    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs + args.label_dirs:
         assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
     assert len(args.train_dirs) > 0, 'No train files are provided.'
-    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs)
+    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs, label_dirs=args.label_dirs)
     logger.info('Initialize the model...')
     model = Model(args, len(dataset.qid_query), len(dataset.uid_url),  len(dataset.vid_vtype))
     logger.info('model.global_step: {}'.format(model.global_step))
@@ -131,10 +138,10 @@ def evaluate(args):
     """
     logger = logging.getLogger("NCM")
     logger.info('Checking the data files...')
-    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs:
+    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs + args.label_dirs:
         assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
     assert len(args.dev_dirs) > 0, 'No dev files are provided.'
-    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs)
+    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs, label_dirs=args.label_dirs)
     logger.info('Initialize the model...')
     model = Model(args, len(dataset.qid_query), len(dataset.uid_url), len(dataset.vid_vtype))
     logger.info('model.global_step: {}'.format(model.global_step))
@@ -156,10 +163,10 @@ def predict(args):
     """
     logger = logging.getLogger("NCM")
     logger.info('Checking the data files...')
-    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs:
+    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs + args.label_dirs:
         assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
     assert len(args.test_dirs) > 0, 'No test files are provided.'
-    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs)
+    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs, label_dirs=args.label_dirs)
     logger.info('Initialize the model...')
     model = Model(args, len(dataset.qid_query), len(dataset.uid_url), len(dataset.vid_vtype))
     logger.info('model.global_step: {}'.format(model.global_step))
@@ -181,9 +188,9 @@ def rank(args):
     """
     logger = logging.getLogger("NCM")
     logger.info('Checking the data files...')
-    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs:
+    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs + args.label_dirs:
         assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
-    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs)
+    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs, label_dirs=args.label_dirs)
     logger.info('Initialize the model...')
     model = Model(args, len(dataset.qid_query), len(dataset.uid_url), len(dataset.vid_vtype))
     logger.info('model.global_step: {}'.format(model.global_step))
@@ -196,6 +203,30 @@ def rank(args):
     trunc_levels = [1, 3, 5, 10]
     for trunc_level in trunc_levels:
         ndcg_version1, ndcg_version2 = relevance_estimator.evaluate(model, dataset, relevance_queries, trunc_level)
+        logger.info("NDCG@{}: {}, {}".format(trunc_level, ndcg_version1, ndcg_version2))
+    logger.info('【{}, {}】'.format(args.load_model, args.minimum_occurrence))
+
+def rank_cheat(args):
+    """
+    cheat on ranking performance on test files
+    """
+    logger = logging.getLogger("NCM")
+    logger.info('Checking the data files...')
+    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs + args.label_dirs:
+        assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
+    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs, label_dirs=args.label_dirs)
+    logger.info('Initialize the model...')
+    model = Model(args, len(dataset.qid_query), len(dataset.uid_url), len(dataset.vid_vtype))
+    logger.info('model.global_step: {}'.format(model.global_step))
+    assert args.load_model > -1
+    logger.info('Restoring the model...')
+    model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
+    logger.info('Start computing NDCG@k for ranking performance (cheat)')
+    label_batches = dataset.gen_mini_batches('label', 1, shuffle=False)
+    trunc_levels = [1, 3, 5, 10]
+    ndcgs_version1, ndcgs_version2 = model.ndcg_cheat(label_batches, dataset)
+    for trunc_level in trunc_levels:
+        ndcg_version1, ndcg_version2 = ndcgs_version1[trunc_level], ndcgs_version2[trunc_level]
         logger.info("NDCG@{}: {}, {}".format(trunc_level, ndcg_version1, ndcg_version2))
     logger.info('【{}, {}】'.format(args.load_model, args.minimum_occurrence))
 
@@ -286,6 +317,8 @@ def run():
         predict(args)
     if args.rank:
         rank(args)
+    if args.rank_cheat:
+        rank_cheat(args)
     if args.generate_click_seq:
         generate_click_seq(args)
     if args.generate_click_seq_cheat:
