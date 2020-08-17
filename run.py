@@ -32,6 +32,8 @@ def parse_args():
                         help='generate click sequence based on model itself')
     parser.add_argument('--generate_click_seq_cheat', action='store_true',
                         help='generate click sequence based on ground truth data')
+    parser.add_argument('--generate_synthetic_dataset', action='store_true',
+                        help='generate synthetic dataset for reverse ppl')
     parser.add_argument('--gpu', type=str, default='',
                         help='specify gpu device')
 
@@ -274,6 +276,35 @@ def generate_click_seq_cheat(args):
     model.generate_click_seq_cheat(test_batches, file_path, '{}.txt'.format(time.strftime('%Y-%m-%d-%H:%M:%S',time.localtime(time.time()))))
     logger.info('Done with click sequence generation.')
 
+def generate_synthetic_dataset(args):
+    """
+    generate synthetic dataset for reverse ppl
+    """
+    logger = logging.getLogger("NCM")
+    logger.info('Checking the data files...')
+    for data_path in args.train_dirs + args.dev_dirs + args.test_dirs:
+        assert os.path.exists(data_path), '{} file does not exist.'.format(data_path)
+    assert len(args.test_dirs) > 0, 'No test files are provided.'
+    dataset = Dataset(args, train_dirs=args.train_dirs, dev_dirs=args.dev_dirs, test_dirs=args.test_dirs)
+    logger.info('Initialize the model...')
+    model = Model(args, len(dataset.qid_query), len(dataset.uid_url), len(dataset.vid_vtype))
+    logger.info('model.global_step: {}'.format(model.global_step))
+    assert args.load_model > -1
+    logger.info('Restoring the model...')
+    model.load_model(model_dir=args.model_dir, model_prefix=args.algo, global_step=args.load_model)
+
+    synthetic_types = ['deterministic', 'stochastic']
+    shuffle_splits = [None, [1, 11], [1, 6, 11]]
+    amplifications = [1, 7]
+    for synthetic_type in synthetic_types:
+        for shuffle_split in shuffle_splits:
+            for amplification in amplifications:
+                file_path = os.path.join(args.model_dir, '..', 'synthetic')
+                model.generate_synthetic_dataset('test', dataset, file_path, 
+                                                'synthetic_{}_{}_{}.txt'.format(synthetic_type[0].upper(), str(shuffle_split), amplification), 
+                                                synthetic_type=synthetic_type, shuffle_split=shuffle_split, amplification=amplification)
+    logger.info('Done with click sequence generation.')
+
 def run():
     """
     Prepares and runs the whole system.
@@ -323,6 +354,8 @@ def run():
         generate_click_seq(args)
     if args.generate_click_seq_cheat:
         generate_click_seq_cheat(args)
+    if args.generate_synthetic_dataset:
+        generate_synthetic_dataset(args)
     logger.info('run done.')
 
 if __name__ == '__main__':

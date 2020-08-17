@@ -338,9 +338,6 @@ class Model(object):
         return sum([(2 ** relevance - 1) / math.log(rank + 2, 2) for rank, relevance in enumerate(ranking_relevances)])
 
     def generate_click_seq(self, eval_batches, file_path, file_name):
-        logit_list_for_print = []
-        click_list_for_print = []
-        true_click_list_for_print = []
         check_path(file_path)
         data_path = os.path.join(file_path, file_name)
         file = open(data_path, 'w')
@@ -377,9 +374,6 @@ class Model(object):
                 file.write('{}\t{}\t{}\n'.format(str(logit), str(CLICK_), str(CLICK)))
 
     def generate_click_seq_cheat(self, eval_batches, file_path, file_name):
-        logit_list_for_print = []
-        click_list_for_print = []
-        true_click_list_for_print = []
         check_path(file_path)
         data_path = os.path.join(file_path, file_name)
         file = open(data_path, 'w')
@@ -402,6 +396,114 @@ class Model(object):
             
             for logit, pred_click, true_click in zip(pred_logits, pred_clicks, true_clicks):
                 file.write('{}\t{}\t{}\n'.format(str(logit), str(pred_click), str(true_click)))
+
+    def generate_synthetic_dataset(self, batch_type, dataset, file_path, file_name, synthetic_type='deterministic', shuffle_split=None, amplification=1):
+        assert batch_type in ['train', 'dev', 'test'], 'unsupported batch_type: {}'.format(batch_type)
+        assert synthetic_type in ['deterministic', 'stochastic'], 'unsupported synthetic_type: {}'.format(synthetic_type)
+        if synthetic_type == 'deterministic' and shuffle_split is None and amplification > 1:
+            # assert amplification == 1, 'amplification should be 1 if using deterministic click generation and no 10-doc shuffles'
+            # useless generative settings
+            return 
+        np.random.seed(2333)
+        torch.manual_seed(2333)
+
+        check_path(file_path)
+        data_path = os.path.join(file_path, file_name)
+        file = open(data_path, 'w')
+        self.logger.info('Generating synthetic dataset based on the {} set...'.format(batch_type))
+        self.logger.info('  - The synthetic dataset will be expended by {} times'.format(amplification))
+        self.logger.info('  - Click generative type {}'.format(synthetic_type))
+        self.logger.info('  - Shuffle split: {}'.format(shuffle_split if shuffle_split is not None else 'no shuffle on 10-doc list'))
+        
+        for amp_idx in range(amplification):
+            self.logger.info('  - Generation at amplification {}'.format(amp_idx))
+            eval_batches = dataset.gen_mini_batches(batch_type, self.args.batch_size, shuffle=False)
+            for b_itx, batch in enumerate(eval_batches):
+                #pprint.pprint(batch)
+                if b_itx % 5000 == 0:
+                    self.logger.info('    - Generating click sequence at step: {}.'.format(b_itx))
+
+                # get the numpy version of input data
+                QIDS_numpy = np.array(batch['qids'], dtype=np.int64)
+                UIDS_numpy = np.array(batch['uids'], dtype=np.int64)
+                VIDS_numpy = np.array(batch['vids'], dtype=np.int64)
+                CLICKS_numpy = np.array(batch['clicks'], dtype=np.int64)
+                #print('{}: {}\n{}\n'.format('UIDS_numpy', UIDS_numpy.shape, UIDS_numpy))
+                #print('{}: {}\n{}\n'.format('VIDS_numpy', VIDS_numpy.shape, VIDS_numpy))
+
+                # shuffle uids and vids according to shuffle_split
+                if shuffle_split is not None:
+                    self.logger.info('    - Start shuffling uids & vids...')
+                    assert type(shuffle_split) == type([0]), 'type of shuffle_split should be a list, but got {}'.format(type(shuffle_split))
+                    assert len(shuffle_split) > 1, 'shuffle_split should have at least 2 elements but got only {}'.format(len(shuffle_split))
+                    shuffle_split.sort()
+                    assert shuffle_split[0] >= 1 and shuffle_split[-1] <=11, 'all elements in shuffle_split should be in range of [1, 11], but got: {}'.format(shuffle_split)
+                    for i in range(UIDS_numpy.shape[0]):
+                        for split_idx in range(len(shuffle_split) - 1):
+                            split_left = shuffle_split[split_idx]
+                            split_right= shuffle_split[split_idx + 1]
+                            #print('  - split [{}, {}]'.format(split_left, split_right))
+                            shuffle_state = np.random.get_state()
+                            np.random.shuffle(UIDS_numpy[i, split_left:split_right])
+                            np.random.set_state(shuffle_state)
+                            np.random.shuffle(VIDS_numpy[i, split_left:split_right])
+
+                #print('{}: {}\n{}\n'.format('UIDS_numpy', UIDS_numpy.shape, UIDS_numpy))
+                #print('{}: {}\n{}\n'.format('VIDS_numpy', VIDS_numpy.shape, VIDS_numpy))
+
+                # get the tensor version of input data (maybe shuffled) from the numpy version
+                QIDS = Variable(torch.from_numpy(QIDS_numpy))
+                UIDS = Variable(torch.from_numpy(UIDS_numpy))
+                VIDS = Variable(torch.from_numpy(VIDS_numpy))
+                CLICKS = Variable(torch.from_numpy(CLICKS_numpy))
+                if use_cuda:
+                    QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
+
+                # start predict the click info
+                self.model.eval()
+                gru_state = Variable(torch.zeros(1, self.args.batch_size, self.hidden_size))
+                CLICK_ = torch.zeros(self.args.batch_size, 1, dtype=CLICKS.dtype)
+                if use_cuda:
+                    gru_state, CLICK_ = gru_state.cuda(), CLICK_.cuda()
+                click_list = []
+                for i in range(self.max_d_num + 1):
+                    logit, gru_state = self.model(QIDS[:, i:i+1], UIDS[:, i:i+1], VIDS[:, i:i+1], CLICK_ , gru_state=gru_state)
+                    if i > 0:
+                        if synthetic_type == 'deterministic':
+                            CLICK_ = (logit > 0.5).type(CLICKS.dtype)
+                            #print('{}: {}\n{}'.format('logit', logit.shape, logit))
+                            #print('{}: {}\n{}'.format('CLICK_', CLICK_.shape, CLICK_))
+                            #print()
+                        elif synthetic_type == 'stochastic':
+                            random_tmp = torch.rand(logit.shape)
+                            if use_cuda:
+                                random_tmp = random_tmp.cuda()
+                            CLICK_ = (random_tmp <= logit).type(CLICKS.dtype)
+                            #print('{}: {}\n{}'.format('logit', logit.shape, logit))
+                            #print('{}: {}\n{}'.format('random_tmp', random_tmp.shape, random_tmp))
+                            #print('{}: {}\n{}'.format('CLICK_', CLICK_.shape, CLICK_))
+                            #print()
+                        click_list.append(CLICK_)
+                CLICKS_ = torch.cat(click_list, dim=1).cpu().numpy().tolist()
+                UIDS = UIDS.cpu().numpy().tolist()
+                VIDS = VIDS.cpu().numpy().tolist()
+                assert len(CLICKS_[0]) == 10
+                for qids, uids, vids, clicks in zip(batch['qids'], UIDS, VIDS, CLICKS_):
+                    '''print(qids)
+                    print(uids)
+                    print(vids)
+                    print()'''
+                    qid = dataset.qid_query[qids[0]]
+                    uids = [dataset.uid_url[uid] for uid in uids]
+                    vids = [dataset.vid_vtype[vid] for vid in vids]
+                    '''print(qid)
+                    print(uids)
+                    print(vids)
+                    print()'''
+                    file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(0, qid, 0, 0, str(uids[1:]), str(vids[1:]), str(clicks)))
+                #exit(0)
+        self.logger.info('Finish synthetic dataset generation...')
+        file.close()
 
     def save_model(self, model_dir, model_prefix):
         """
