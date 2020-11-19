@@ -34,8 +34,7 @@ After data pre-processing, we can put all the generated files into ```./data``` 
 
 The format of train & dev & test input files is as follows:
 
-- Each line: ```<session id><tab><query id><tab><zero><tab><zero><tab>[<document ids>]<tab>[<vtype ids>]<tab>[<clicks infos>]```
-- The ```<zero>``` is a meaningless alignment term, which can be removed from the program.
+- Each line: ```<session id><tab><query id><tab>[<document ids>]<tab>[<vtype ids>]<tab>[<clicks infos>]``
 
 The format of human_label.txt remains the same in TianGong-ST dataset:
 

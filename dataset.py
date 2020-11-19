@@ -62,13 +62,13 @@ class Dataset(object):
                 session_id = attr[0]
                 query = int(attr[1].strip())
 
-                urls = [url for url in json.loads(attr[4])]
+                urls = [url for url in json.loads(attr[2])]
                 if len(urls) < self.max_d_num:
                     continue
                 urls = urls[:self.max_d_num]
-                vtypes = [vtype for vtype in json.loads(attr[5])][:self.max_d_num]
-                clicks = json.loads(attr[6])[:self.max_d_num]
-                relevances = json.loads(attr[7]) if mode == 'label' else [0 for _ in range(self.max_d_num)]
+                vtypes = [vtype for vtype in json.loads(attr[3])][:self.max_d_num]
+                clicks = json.loads(attr[4])[:self.max_d_num]
+                relevances = json.loads(attr[5]) if mode == 'label' else [0 for _ in range(self.max_d_num)]
                 clicks = [0, 0] + clicks
                 if query not in self.query_qid:
                     self.query_qid[query] = len(self.query_qid)

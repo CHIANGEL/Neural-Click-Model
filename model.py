@@ -129,14 +129,10 @@ class Model(object):
 
             if evaluate and self.global_step % self.eval_freq == 0:
                 if data.dev_set is not None:
-                    eval_batches = data.gen_mini_batches('dev', batch_size, shuffle=False)
-                    eval_loss, perplexity, perplexity_at_rank = self.evaluate(eval_batches, data, result_dir=self.args.result_dir, t=-1,
-                                                                                result_prefix='train_dev.predicted.{}.{}'.format(self.args.algo,
-                                                                                                                                self.global_step))
-                    eval_batches1 = data.gen_mini_batches('test', batch_size, shuffle=False)
-                    eval_loss1, perplexity1, perplexity_at_rank1 = self.evaluate(eval_batches1, data, result_dir=self.args.result_dir, t=-1,
-                                                                                result_prefix='train_test.predicted.{}.{}'.format(self.args.algo,
-                                                                                                                                self.global_step))
+                    eval_batches = data.gen_mini_batches('dev', 35541, shuffle=False)
+                    eval_loss, perplexity, perplexity_at_rank = self.evaluate(eval_batches, data)
+                    eval_batches1 = data.gen_mini_batches('test', 35501, shuffle=False)
+                    eval_loss1, perplexity1, perplexity_at_rank1 = self.evaluate(eval_batches1, data)
                     self.writer.add_scalar("dev/loss", eval_loss, self.global_step)
                     self.writer.add_scalar("dev/perplexity", perplexity, self.global_step)
                     self.writer.add_scalar("test/loss", eval_loss1, self.global_step)
@@ -195,49 +191,39 @@ class Model(object):
                     perplexity_at_rank[position_idx] += torch.log2(pred_scores[batch_idx][position_idx].view(1) + MINF)
         return total_num, perplexity_at_rank
 
-    def evaluate(self, eval_batches, dataset, result_dir=None, result_prefix=None, t=-1):
+    def evaluate(self, eval_batches, dataset):
         eval_ouput = []
         total_loss, total_num = 0., 0
         perplexity_num = 0
         perplexity_at_rank = [0.0] * 10 # 10 docs per query
-        for b_itx, batch in enumerate(eval_batches):
-            if b_itx == t:
-                break
-            if b_itx % 5000 == 0:
-                self.logger.info('Evaluation step {}.'.format(b_itx))
-            QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
-            UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
-            VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
-            CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:,:-1])
-            if use_cuda:
-                QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
+        with torch.no_grad():
+            for b_itx, batch in enumerate(eval_batches):
+                if b_itx % 5000 == 0:
+                    self.logger.info('Evaluation step {}.'.format(b_itx))
+                QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
+                UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
+                VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
+                CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:,:-1])
+                if use_cuda:
+                    QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
 
-            self.model.eval()
-            pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
-            loss, loss_list = self.compute_loss(pred_logits, batch['clicks'])
-            tmp_num, tmp_perplexity_at_rank = self.compute_perplexity(pred_logits, batch['clicks'])
-            perplexity_num += tmp_num
-            perplexity_at_rank = [perplexity_at_rank[i] + tmp_perplexity_at_rank[i] for i in range(10)]
-            # total_loss_list += loss_list
-            # pred_logits_list = pred_logits.data.cpu().numpy().tolist()
-            for pred_metric, data, pred_logit in zip(loss_list, batch['raw_data'], pred_logits.data.cpu().numpy().tolist()):
-                eval_ouput.append([data['session_id'], data['query'],
-                                    data['urls'][1:], data['vtypes'][1:], data['clicks'][2:], pred_logit, pred_metric])
-            total_loss += loss.data[0] * len(batch['raw_data'])
-            total_num += len(batch['raw_data'])
-
-        if result_dir is not None and result_prefix is not None:
-            result_file = os.path.join(result_dir, result_prefix + '.txt')
-            with open(result_file, 'w') as fout:
-                for sample in eval_ouput:
-                    fout.write('\t'.join(map(str, sample)) + '\n')
-
-            self.logger.info('Saving {} results to {}'.format(result_prefix, result_file))
-
-        assert total_num == perplexity_num
-        ave_span_loss = 1.0 * total_loss / total_num
-        perplexity_at_rank = [2 ** (-x / perplexity_num) for x in perplexity_at_rank]
-        perplexity = sum(perplexity_at_rank) / len(perplexity_at_rank)
+                self.model.eval()
+                pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
+                loss, loss_list = self.compute_loss(pred_logits, batch['clicks'])
+                tmp_num, tmp_perplexity_at_rank = self.compute_perplexity(pred_logits, batch['clicks'])
+                perplexity_num += tmp_num
+                perplexity_at_rank = [perplexity_at_rank[i] + tmp_perplexity_at_rank[i] for i in range(10)]
+                # total_loss_list += loss_list
+                # pred_logits_list = pred_logits.data.cpu().numpy().tolist()
+                for pred_metric, data, pred_logit in zip(loss_list, batch['raw_data'], pred_logits.data.cpu().numpy().tolist()):
+                    eval_ouput.append([data['session_id'], data['query'],
+                                        data['urls'][1:], data['vtypes'][1:], data['clicks'][2:], pred_logit, pred_metric])
+                total_loss += loss.data[0] * len(batch['raw_data'])
+                total_num += len(batch['raw_data'])
+            assert total_num == perplexity_num
+            ave_span_loss = 1.0 * total_loss / total_num
+            perplexity_at_rank = [2 ** (-x / perplexity_num) for x in perplexity_at_rank]
+            perplexity = sum(perplexity_at_rank) / len(perplexity_at_rank)
         return ave_span_loss, perplexity, perplexity_at_rank
     
     def predict_relevance(self, qid, uid, vid):
@@ -255,7 +241,7 @@ class Model(object):
         pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
         return pred_logits[0][0]
     
-    def ndcg_cheat(self, label_batches, data, result_dir=None, result_prefix=None, stop=-1):
+    def ndcg_cheat(self, label_batches, data):
         trunc_levels = [1, 3, 5, 10]
         ndcg_version1, ndcg_version2 = {}, {}
         useless_session, cnt_version1, cnt_version2 = {}, {}, {}
@@ -267,9 +253,6 @@ class Model(object):
             cnt_version2[k] = 0
         with torch.no_grad():
             for b_itx, batch in enumerate(label_batches):
-                if b_itx == stop:
-                    break
-
                 QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
                 UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
                 VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
