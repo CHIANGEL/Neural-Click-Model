@@ -28,8 +28,6 @@ class Dataset(object):
         self.query_qid = utils.load_dict(self.data_dir, 'query_qid.dict')
         self.url_uid = utils.load_dict(self.data_dir, 'url_uid.dict')
         self.vtype_vid = utils.load_dict(self.data_dir, 'vtype_vid.dict')
-        self.qid_nid = utils.load_dict(self.data_dir, 'qid_nid.dict')
-        self.uid_nid = utils.load_dict(self.data_dir, 'uid_nid.dict')
         self.query_size = len(self.query_qid)
         self.doc_size = len(self.url_uid)
         self.vtype_size = len(self.vtype_vid)
