@@ -1,496 +1,230 @@
 import os
-import time
 import logging
-import json
 import numpy as np
 import torch
-import copy
 import math
 import random
 from torch.autograd import Variable
 from tqdm import tqdm
-from network import Network
+from NCM import NCM
 from tensorboardX import SummaryWriter
 from torch import nn
-from ndcg import RelevanceEstimator
-from TianGong_HumanLabel_Parser import TianGong_HumanLabel_Parser
-from utils import *
 
 use_cuda = torch.cuda.is_available()
-
+device = torch.device('cuda') if use_cuda else torch.device('cpu')
 MINF = 1e-30
 
 class Model(object):
-    """
-    Implements the main reading comprehension model.
-    """
-    def __init__(self, args, query_size, doc_size, vtype_size):
-        # logging
-        self.logger = logging.getLogger("NCM")
-
-        # basic config
+    def __init__(self, args, query_size, doc_size, vtype_size, dataset):
         self.args = args
-        self.hidden_size = args.hidden_size
-        self.optim_type = args.optim
-        self.learning_rate = args.learning_rate
-        self.weight_decay = args.weight_decay
+        self.logger = logging.getLogger("NCM")
         self.eval_freq = args.eval_freq
+        self.learning_rate = args.learning_rate
         self.global_step = args.load_model if args.load_model > -1 else 0
         self.patience = args.patience
-        self.max_d_num = args.max_d_num
         self.writer = None
         if args.train:
             self.writer = SummaryWriter(self.args.summary_dir)
 
-        # network
-        self.model = Network(self.args, query_size, doc_size, vtype_size)
+        # NCM initialization
+        self.model = NCM(self.args, query_size, doc_size, vtype_size)
         if args.data_parallel:
             self.model = nn.DataParallel(self.model)
         if use_cuda:
             self.model = self.model.cuda()
         self.optimizer = self.create_train_op()
-        self.criterion = nn.MSELoss()
+        self.loss_criterion = nn.BCELoss()
         
-        # for NDCG@k
-        self.relevance_queries = TianGong_HumanLabel_Parser().parse(args.human_label_dir)
-        self.relevance_estimator = RelevanceEstimator(args.minimum_occurrence)
+        # NDCG Truncation Levels
         self.trunc_levels = [1, 3, 5, 10]
-
-    def compute_loss(self, pred_scores, target_scores):
+    
+    def compute_loss(self, pred_logits, TRUE_CLICKS):
         """
         The loss function
         """
-        total_loss = 0.
-        loss_list = []
-        cnt = 0
-        for batch_idx, scores in enumerate(target_scores):
-            cnt += 1
-            loss = 0.
-            for position_idx, score in enumerate(scores[2:]):
-                if score == 0:
-                    loss -= torch.log(1. - pred_scores[batch_idx][position_idx].view(1) + MINF)
-                else:
-                    loss -= torch.log(pred_scores[batch_idx][position_idx].view(1) + MINF)
-            loss_list.append(loss.data[0])
-            total_loss += loss
-        total_loss /= cnt
-        return total_loss, loss_list
+        return self.loss_criterion(pred_logits, TRUE_CLICKS)
+
+    def compute_perplexity(self, pred_logits, TRUE_CLICKS):
+        '''
+        Compute the perplexity
+        '''
+        pos_logits = torch.log2(pred_logits + MINF)
+        neg_logits = torch.log2(1. - pred_logits + MINF)
+        perplexity_at_rank = torch.where(TRUE_CLICKS == 1, pos_logits, neg_logits).sum(dim=0)
+        return perplexity_at_rank
 
     def create_train_op(self):
         """
         Selects the training algorithm and creates a train operation with it
         """
-        if self.optim_type == 'adagrad':
+        if self.args.optim == 'adagrad':
             optimizer = torch.optim.Adagrad(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
-        elif self.optim_type == 'adadelta':
+        elif self.args.optim == 'adadelta':
             optimizer = torch.optim.Adadelta(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
-        elif self.optim_type == 'adam':
+        elif self.args.optim == 'adam':
             optimizer = torch.optim.Adam(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
-        elif self.optim_type == 'rprop':
+        elif self.args.optim == 'rprop':
             optimizer = torch.optim.RMSprop(self.model.parameters(), lr=self.learning_rate, weight_decay=self.args.weight_decay)
-        elif self.optim_type == 'sgd':
+        elif self.args.optim == 'sgd':
             optimizer = torch.optim.SGD(self.model.parameters(), lr=self.learning_rate, momentum=self.args.momentum,
                                         weight_decay=self.args.weight_decay)
         else:
-            raise NotImplementedError('Unsupported optimizer: {}'.format(self.optim_type))
+            raise NotImplementedError('Unsupported optimizer: {}'.format(self.args.optim))
         return optimizer
 
     def adjust_learning_rate(self, decay_rate=0.5):
         for param_group in self.optimizer.param_groups:
             param_group['lr'] = param_group['lr'] * decay_rate
 
-    def _train_epoch(self, train_batches, data, max_metric_value, metric_save, patience, step_pbar):
-        """
-        Trains the model for a single epoch.
-        """
+    def _train_epoch(self, train_batches, dataset, metric_save, patience, step_pbar):
         evaluate = True
         exit_tag = False
-        num_steps = self.args.num_steps
         check_point, batch_size = self.args.check_point, self.args.batch_size
         save_dir, save_prefix = self.args.model_dir, self.args.algo
 
         for bitx, batch in enumerate(train_batches):
             self.global_step += 1
             step_pbar.update(1)
-            QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
-            UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
-            VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
-            CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:,:-1])
-            if use_cuda:
-                QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
 
-            self.model.train()
-            self.optimizer.zero_grad()
-            pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
-            loss, loss_list = self.compute_loss(pred_logits, batch['clicks'])
-            loss.backward()
-            self.optimizer.step()
-            self.writer.add_scalar('train/loss', loss.data[0], self.global_step)
-
-            if evaluate and self.global_step % self.eval_freq == 0:
-                if data.dev_set is not None:
-                    eval_batches = data.gen_mini_batches('dev', 35541, shuffle=False)
-                    eval_loss, perplexity, perplexity_at_rank = self.evaluate(eval_batches, data)
-                    eval_batches1 = data.gen_mini_batches('test', 35501, shuffle=False)
-                    eval_loss1, perplexity1, perplexity_at_rank1 = self.evaluate(eval_batches1, data)
-                    self.writer.add_scalar("dev/loss", eval_loss, self.global_step)
-                    self.writer.add_scalar("dev/perplexity", perplexity, self.global_step)
-                    self.writer.add_scalar("test/loss", eval_loss1, self.global_step)
-                    self.writer.add_scalar("test/perplexity", perplexity1, self.global_step)
-
-                    for trunc_level in self.trunc_levels:
-                        ndcg_version1, ndcg_version2 = self.relevance_estimator.evaluate(self, data, self.relevance_queries, trunc_level)
-                        self.writer.add_scalar("NDCG_version1/{}".format(trunc_level), ndcg_version1, self.global_step)
-                        self.writer.add_scalar("NDCG_version2/{}".format(trunc_level), ndcg_version2, self.global_step)
-
-                    if eval_loss < metric_save:
-                        metric_save = eval_loss
-                        patience = 0
-                    else:
-                        patience += 1
-                    if patience >= self.patience:
-                        self.adjust_learning_rate(self.args.lr_decay)
-                        self.learning_rate *= self.args.lr_decay
-                        self.writer.add_scalar('train/lr', self.learning_rate, self.global_step)
-                        metric_save = eval_loss
-                        patience = 0
-                        self.patience += 1
-                else:
-                    self.logger.warning('No dev set is loaded for evaluation in the dataset!')
-            if check_point > 0 and self.global_step % check_point == 0:
-                self.save_model(save_dir, save_prefix)
-            if self.global_step >= num_steps:
-                exit_tag = True
-
-        return max_metric_value, exit_tag, metric_save, patience
-
-    def train(self, data):
-        max_metric_value, epoch, patience, metric_save = 0., 0, 0, 1e10
-        step_pbar = tqdm(total=self.args.num_steps)
-        exit_tag = False
-        self.writer.add_scalar('train/lr', self.learning_rate, self.global_step)
-        while not exit_tag:
-            epoch += 1
-            train_batches = data.gen_mini_batches('train', self.args.batch_size, shuffle=True)
-            max_metric_value, exit_tag, metric_save, patience = self._train_epoch(train_batches, data,
-                                                                                max_metric_value, metric_save,
-                                                                                patience, step_pbar)
-
-    def compute_perplexity(self, pred_scores, target_scores):
-        '''
-        Compute the perplexity
-        '''
-        perplexity_at_rank = [0.0] * 10 # 10 docs per query
-        total_num = 0
-        for batch_idx, scores in enumerate(target_scores):
-            total_num += 1
-            for position_idx, score in enumerate(scores[2:]):
-                if score == 0:
-                    perplexity_at_rank[position_idx] += torch.log2(1. - pred_scores[batch_idx][position_idx].view(1) + MINF)
-                else:
-                    perplexity_at_rank[position_idx] += torch.log2(pred_scores[batch_idx][position_idx].view(1) + MINF)
-        return total_num, perplexity_at_rank
-
-    def evaluate(self, eval_batches, dataset):
-        eval_ouput = []
-        total_loss, total_num = 0., 0
-        perplexity_num = 0
-        perplexity_at_rank = [0.0] * 10 # 10 docs per query
-        with torch.no_grad():
-            for b_itx, batch in enumerate(eval_batches):
-                if b_itx % 5000 == 0:
-                    self.logger.info('Evaluation step {}.'.format(b_itx))
-                QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
-                UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
-                VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
-                CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:,:-1])
-                if use_cuda:
-                    QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
-
-                self.model.eval()
-                pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
-                loss, loss_list = self.compute_loss(pred_logits, batch['clicks'])
-                tmp_num, tmp_perplexity_at_rank = self.compute_perplexity(pred_logits, batch['clicks'])
-                perplexity_num += tmp_num
-                perplexity_at_rank = [perplexity_at_rank[i] + tmp_perplexity_at_rank[i] for i in range(10)]
-                # total_loss_list += loss_list
-                # pred_logits_list = pred_logits.data.cpu().numpy().tolist()
-                for pred_metric, data, pred_logit in zip(loss_list, batch['raw_data'], pred_logits.data.cpu().numpy().tolist()):
-                    eval_ouput.append([data['session_id'], data['query'],
-                                        data['urls'][1:], data['vtypes'][1:], data['clicks'][2:], pred_logit, pred_metric])
-                total_loss += loss.data[0] * len(batch['raw_data'])
-                total_num += len(batch['raw_data'])
-            assert total_num == perplexity_num
-            ave_span_loss = 1.0 * total_loss / total_num
-            perplexity_at_rank = [2 ** (-x / perplexity_num) for x in perplexity_at_rank]
-            perplexity = sum(perplexity_at_rank) / len(perplexity_at_rank)
-        return ave_span_loss, perplexity, perplexity_at_rank
-    
-    def predict_relevance(self, qid, uid, vid):
-        qids = [[qid, qid]]
-        uids = [[0, uid]]
-        vids = [[0, vid]]
-        clicks = [[0, 0, 0]]
-        QIDS = Variable(torch.from_numpy(np.array(qids, dtype=np.int64)))
-        UIDS = Variable(torch.from_numpy(np.array(uids, dtype=np.int64)))
-        VIDS = Variable(torch.from_numpy(np.array(vids, dtype=np.int64)))
-        CLICKS = Variable(torch.from_numpy(np.array(clicks, dtype=np.int64))[:,:-1])
-        if use_cuda:
-            QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
-        self.model.eval()
-        pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
-        return pred_logits[0][0]
-    
-    def ndcg_cheat(self, label_batches, data):
-        trunc_levels = [1, 3, 5, 10]
-        ndcg_version1, ndcg_version2 = {}, {}
-        useless_session, cnt_version1, cnt_version2 = {}, {}, {}
-        for k in trunc_levels:
-            ndcg_version1[k] = 0.0
-            ndcg_version2[k] = 0.0
-            useless_session[k] = 0
-            cnt_version1[k] = 0
-            cnt_version2[k] = 0
-        with torch.no_grad():
-            for b_itx, batch in enumerate(label_batches):
-                QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
-                UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
-                VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
-                CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:, :-1])
-                true_relevances = batch['relevances'][0]
-                if use_cuda:
-                    QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
-
-                self.model.eval()
-                pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
-                relevances = pred_logits.data.cpu().numpy().reshape(-1).tolist()
-                pred_rels = {}
-                for idx, relevance in enumerate(relevances):
-                    pred_rels[idx] = relevance
-                
-                #print('{}: \n{}'.format('relevances', relevances))
-                #print('{}: \n{}'.format('true_relevances', true_relevances))
-                #print('{}: \n{}'.format('pred_rels', pred_rels))
-                for k in trunc_levels:
-                    #print('\n{}: {}'.format('trunc_level', k))
-                    ideal_ranking_relevances = sorted(true_relevances, reverse=True)[:k]
-                    ranking = sorted([idx for idx in pred_rels], key = lambda idx : pred_rels[idx], reverse=True)
-                    ranking_relevances = [true_relevances[idx] for idx in ranking[:k]]
-                    #print('{}: {}'.format('ideal_ranking_relevances', ideal_ranking_relevances))
-                    #print('{}: {}'.format('ranking', ranking))
-                    #print('{}: {}'.format('ranking_relevances', ranking_relevances))
-                    dcg = self.dcg(ranking_relevances)
-                    idcg = self.dcg(ideal_ranking_relevances)
-                    if dcg > idcg:
-                        pprint.pprint(ranking_relevances)
-                        pprint.pprint(ideal_ranking_relevances)
-                        pprint.pprint(dcg)
-                        pprint.pprint(idcg)
-                        pprint.pprint(info_per_query)
-                        assert 0
-                    ndcg = dcg / idcg if idcg > 0 else 1.0
-                    if idcg == 0:
-                        useless_session[k] += 1
-                        cnt_version2[k] += 1
-                        ndcg_version2[k] += ndcg
-                    else:
-                        ndcg = dcg / idcg
-                        cnt_version1[k] += 1
-                        cnt_version2[k] += 1
-                        ndcg_version1[k] += ndcg
-                        ndcg_version2[k] += ndcg
-                    #print('{}: {}'.format('dcg', dcg))
-                    #print('{}: {}'.format('idcg', idcg))
-                    #print('{}: {}'.format('ndcg', ndcg))
-            '''for k in trunc_levels:
-                print()
-                print('{}: {}'.format('cnt_version1[{}]'.format(k), cnt_version1[k]))
-                print('{}: {}'.format('useless_session[{}]'.format(k), useless_session[k]))
-                print('{}: {}'.format('cnt_version2[{}]'.format(k), cnt_version2[k]))'''
-            for k in trunc_levels:
-                assert cnt_version1[k] + useless_session[k] == 2000
-                assert cnt_version2[k] == 2000
-                ndcg_version1[k] /= cnt_version1[k]
-                ndcg_version2[k] /= cnt_version2[k]
-        return ndcg_version1, ndcg_version2
-
-    def dcg(self, ranking_relevances):
-        """
-        Computes the DCG for a given ranking_relevances
-        """
-        return sum([(2 ** relevance - 1) / math.log(rank + 2, 2) for rank, relevance in enumerate(ranking_relevances)])
-
-    def generate_click_seq(self, eval_batches, file_path, file_name):
-        check_path(file_path)
-        data_path = os.path.join(file_path, file_name)
-        file = open(data_path, 'w')
-        for b_itx, batch in enumerate(eval_batches):
-            if b_itx % 5000 == 0:
-                self.logger.info('Generating click sequence at step: {}.'.format(b_itx))
-            QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
-            UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
-            VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
-            CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64)))
-            if use_cuda:
-                QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
-
-            self.model.eval()
-            gru_state = Variable(torch.zeros(1, self.args.batch_size, self.hidden_size))
-            CLICK_ = torch.zeros(self.args.batch_size, 1, dtype=CLICKS.dtype)
-            if use_cuda:
-                gru_state, CLICK_ = gru_state.cuda(), CLICK_.cuda()
-            logit_list = []
-            click_list = []
-            for i in range(self.max_d_num + 1):
-                logit, gru_state = self.model(QIDS[:, i:i+1], UIDS[:, i:i+1], VIDS[:, i:i+1], CLICK_ , gru_state=gru_state)
-                if i > 0:
-                    CLICK_ = (logit > 0.5).type(CLICKS.dtype)
-                    logit_list.append(logit)
-                    click_list.append(CLICK_)
-            
-            logits = torch.cat(logit_list, dim=1).cpu().detach().numpy().tolist()
-            CLICKS_ = torch.cat(click_list, dim=1).cpu().numpy().tolist()
-            CLICKS = CLICKS[:, 2:].cpu().numpy().tolist()
-            assert len(CLICKS[0]) == 10
-            
-            for logit, CLICK_, CLICK in zip(logits, CLICKS_, CLICKS):
-                file.write('{}\t{}\t{}\n'.format(str(logit), str(CLICK_), str(CLICK)))
-
-    def generate_click_seq_cheat(self, eval_batches, file_path, file_name):
-        check_path(file_path)
-        data_path = os.path.join(file_path, file_name)
-        file = open(data_path, 'w')
-        for b_itx, batch in enumerate(eval_batches):
-            if b_itx % 5000 == 0:
-                self.logger.info('Generating click sequence at step: {}.'.format(b_itx))
             QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
             UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
             VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
             CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:, :-1])
-            true_clicks = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64)))
+            TRUE_CLICKS = torch.from_numpy(np.array(batch['clicks'], dtype=np.float32)[:, 2:])
             if use_cuda:
-                QIDS, UIDS, VIDS, CLICKS, true_clicks = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda(), true_clicks.cuda()
+                QIDS, UIDS, VIDS, CLICKS, TRUE_CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda(), TRUE_CLICKS.cuda()
 
-            self.model.eval()
+            self.model.train()
+            self.optimizer.zero_grad()
             pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
-            pred_clicks = (pred_logits > 0.5).type(true_clicks.dtype).cpu().numpy().tolist()
-            pred_logits = pred_logits.detach().cpu().numpy().tolist()
-            true_clicks = true_clicks[:, 2:].cpu().numpy().tolist()
-            
-            for logit, pred_click, true_click in zip(pred_logits, pred_clicks, true_clicks):
-                file.write('{}\t{}\t{}\n'.format(str(logit), str(pred_click), str(true_click)))
+            loss = self.compute_loss(pred_logits, TRUE_CLICKS)
+            loss.backward()
+            self.optimizer.step()
+            self.writer.add_scalar('train/loss', loss, self.global_step)
 
-    def generate_synthetic_dataset(self, batch_type, dataset, file_path, file_name, synthetic_type='deterministic', shuffle_split=None, amplification=1):
-        assert batch_type in ['train', 'dev', 'test'], 'unsupported batch_type: {}'.format(batch_type)
-        assert synthetic_type in ['deterministic', 'stochastic'], 'unsupported synthetic_type: {}'.format(synthetic_type)
-        if synthetic_type == 'deterministic' and shuffle_split is None and amplification > 1:
-            # assert amplification == 1, 'amplification should be 1 if using deterministic click generation and no 10-doc shuffles'
-            # useless generative settings
-            return 
-        np.random.seed(2333)
-        torch.manual_seed(2333)
+            if evaluate and self.global_step % self.eval_freq == 0:
+                valid_batches = dataset.gen_mini_batches('valid', dataset.validset_size, shuffle=False)
+                valid_loss, valid_perplexity = self.evaluate(valid_batches, dataset)
+                self.writer.add_scalar("valid/loss", valid_loss, self.global_step)
+                self.writer.add_scalar("valid/perplexity", valid_perplexity, self.global_step)
 
-        check_path(file_path)
-        data_path = os.path.join(file_path, file_name)
-        file = open(data_path, 'w')
-        self.logger.info('Generating synthetic dataset based on the {} set...'.format(batch_type))
-        self.logger.info('  - The synthetic dataset will be expended by {} times'.format(amplification))
-        self.logger.info('  - Click generative type {}'.format(synthetic_type))
-        self.logger.info('  - Shuffle split: {}'.format(shuffle_split if shuffle_split is not None else 'no shuffle on 10-doc list'))
-        
-        for amp_idx in range(amplification):
-            self.logger.info('  - Generation at amplification {}'.format(amp_idx))
-            eval_batches = dataset.gen_mini_batches(batch_type, self.args.batch_size, shuffle=False)
+                test_batches = dataset.gen_mini_batches('test', dataset.testset_size, shuffle=False)
+                test_loss, test_perplexity = self.evaluate(test_batches, dataset)
+                self.writer.add_scalar("test/loss", test_loss, self.global_step)
+                self.writer.add_scalar("test/perplexity", test_perplexity, self.global_step)
+                
+                label_batches = dataset.gen_mini_batches('label', dataset.labelset_size, shuffle=False)
+                ndcgs = self.ranking(label_batches, dataset)
+                torch.cuda.empty_cache()
+                for trunc_level in self.trunc_levels:
+                    self.writer.add_scalar("rank/{}".format(trunc_level), ndcgs[trunc_level], self.global_step)
+
+                if valid_perplexity < metric_save:
+                    metric_save = valid_perplexity
+                    patience = 0
+                else:
+                    patience += 1
+                if patience >= self.patience:
+                    self.adjust_learning_rate(self.args.lr_decay)
+                    self.learning_rate *= self.args.lr_decay
+                    self.writer.add_scalar('train/lr', self.learning_rate, self.global_step)
+                    metric_save = valid_perplexity
+                    patience = 0
+                    self.patience += 1
+            if check_point > 0 and self.global_step % check_point == 0:
+                self.save_model(save_dir, save_prefix)
+            if self.global_step >= self.args.num_steps:
+                exit_tag = True
+
+        return exit_tag, metric_save, patience
+
+    def train(self, dataset):
+        patience, metric_save = 0, 1e10
+        step_pbar = tqdm(total=self.args.num_steps)
+        exit_tag = False
+        self.writer.add_scalar('train/lr', self.args.learning_rate, self.global_step)
+        while not exit_tag:
+            train_batches = dataset.gen_mini_batches('train', self.args.batch_size, shuffle=True)
+            exit_tag, metric_save, patience = self._train_epoch(train_batches, dataset, metric_save, patience, step_pbar)
+
+    def evaluate(self, eval_batches, dataset):
+        total_loss, total_num = 0., 0
+        perplexity_num = 0
+        perplexity_at_rank = torch.zeros(10, device=device, dtype=torch.float) # 10 docs per query
+        with torch.no_grad():
             for b_itx, batch in enumerate(eval_batches):
-                #pprint.pprint(batch)
-                if b_itx % 5000 == 0:
-                    self.logger.info('    - Generating click sequence at step: {}.'.format(b_itx))
-
-                # get the numpy version of input data
-                QIDS_numpy = np.array(batch['qids'], dtype=np.int64)
-                UIDS_numpy = np.array(batch['uids'], dtype=np.int64)
-                VIDS_numpy = np.array(batch['vids'], dtype=np.int64)
-                CLICKS_numpy = np.array(batch['clicks'], dtype=np.int64)
-                #print('{}: {}\n{}\n'.format('UIDS_numpy', UIDS_numpy.shape, UIDS_numpy))
-                #print('{}: {}\n{}\n'.format('VIDS_numpy', VIDS_numpy.shape, VIDS_numpy))
-
-                # shuffle uids and vids according to shuffle_split
-                if shuffle_split is not None:
-                    self.logger.info('    - Start shuffling uids & vids...')
-                    assert type(shuffle_split) == type([0]), 'type of shuffle_split should be a list, but got {}'.format(type(shuffle_split))
-                    assert len(shuffle_split) > 1, 'shuffle_split should have at least 2 elements but got only {}'.format(len(shuffle_split))
-                    shuffle_split.sort()
-                    assert shuffle_split[0] >= 1 and shuffle_split[-1] <=11, 'all elements in shuffle_split should be in range of [1, 11], but got: {}'.format(shuffle_split)
-                    for i in range(UIDS_numpy.shape[0]):
-                        for split_idx in range(len(shuffle_split) - 1):
-                            split_left = shuffle_split[split_idx]
-                            split_right= shuffle_split[split_idx + 1]
-                            #print('  - split [{}, {}]'.format(split_left, split_right))
-                            shuffle_state = np.random.get_state()
-                            np.random.shuffle(UIDS_numpy[i, split_left:split_right])
-                            np.random.set_state(shuffle_state)
-                            np.random.shuffle(VIDS_numpy[i, split_left:split_right])
-
-                #print('{}: {}\n{}\n'.format('UIDS_numpy', UIDS_numpy.shape, UIDS_numpy))
-                #print('{}: {}\n{}\n'.format('VIDS_numpy', VIDS_numpy.shape, VIDS_numpy))
-
-                # get the tensor version of input data (maybe shuffled) from the numpy version
-                QIDS = Variable(torch.from_numpy(QIDS_numpy))
-                UIDS = Variable(torch.from_numpy(UIDS_numpy))
-                VIDS = Variable(torch.from_numpy(VIDS_numpy))
-                CLICKS = Variable(torch.from_numpy(CLICKS_numpy))
+                QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
+                UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
+                VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
+                CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:, :-1])
+                TRUE_CLICKS = torch.from_numpy(np.array(batch['clicks'], dtype=np.float32)[:, 2:])
                 if use_cuda:
-                    QIDS, UIDS, VIDS, CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda()
+                    QIDS, UIDS, VIDS, CLICKS, TRUE_CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda(), TRUE_CLICKS.cuda()
 
-                # start predict the click info
                 self.model.eval()
-                gru_state = Variable(torch.zeros(1, self.args.batch_size, self.hidden_size))
-                CLICK_ = torch.zeros(self.args.batch_size, 1, dtype=CLICKS.dtype)
+                pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
+                loss = self.compute_loss(pred_logits, TRUE_CLICKS)
+                batch_perplexity_at_rank = self.compute_perplexity(pred_logits, TRUE_CLICKS)
+                perplexity_at_rank = perplexity_at_rank + batch_perplexity_at_rank
+                total_loss += loss * len(batch['raw_data'])
+                total_num += len(batch['raw_data'])
+
+            loss = 1.0 * total_loss / total_num
+            perplexity = (2 ** (- perplexity_at_rank / total_num)).sum() / 10
+        return loss, perplexity
+
+    def ranking(self, label_batches, dataset):
+        ndcgs, cnt_useless_session, cnt_usefull_session = {}, {}, {}
+        for k in self.trunc_levels:
+            ndcgs[k] = 0.0
+            cnt_useless_session[k] = 0
+            cnt_usefull_session[k] = 0
+        with torch.no_grad():
+            for b_idx, batch in enumerate(label_batches):
+                QIDS = Variable(torch.from_numpy(np.array(batch['qids'], dtype=np.int64)))
+                UIDS = Variable(torch.from_numpy(np.array(batch['uids'], dtype=np.int64)))
+                VIDS = Variable(torch.from_numpy(np.array(batch['vids'], dtype=np.int64)))
+                CLICKS = Variable(torch.from_numpy(np.array(batch['clicks'], dtype=np.int64))[:, :-1])
+                TRUE_CLICKS = torch.from_numpy(np.array(batch['clicks'], dtype=np.float32)[:, 2:])
                 if use_cuda:
-                    gru_state, CLICK_ = gru_state.cuda(), CLICK_.cuda()
-                click_list = []
-                for i in range(self.max_d_num + 1):
-                    logit, gru_state = self.model(QIDS[:, i:i+1], UIDS[:, i:i+1], VIDS[:, i:i+1], CLICK_ , gru_state=gru_state)
-                    if i > 0:
-                        if synthetic_type == 'deterministic':
-                            CLICK_ = (logit > 0.5).type(CLICKS.dtype)
-                            #print('{}: {}\n{}'.format('logit', logit.shape, logit))
-                            #print('{}: {}\n{}'.format('CLICK_', CLICK_.shape, CLICK_))
-                            #print()
-                        elif synthetic_type == 'stochastic':
-                            random_tmp = torch.rand(logit.shape)
-                            if use_cuda:
-                                random_tmp = random_tmp.cuda()
-                            CLICK_ = (random_tmp <= logit).type(CLICKS.dtype)
-                            #print('{}: {}\n{}'.format('logit', logit.shape, logit))
-                            #print('{}: {}\n{}'.format('random_tmp', random_tmp.shape, random_tmp))
-                            #print('{}: {}\n{}'.format('CLICK_', CLICK_.shape, CLICK_))
-                            #print()
-                        click_list.append(CLICK_)
-                CLICKS_ = torch.cat(click_list, dim=1).cpu().numpy().tolist()
-                UIDS = UIDS.cpu().numpy().tolist()
-                VIDS = VIDS.cpu().numpy().tolist()
-                assert len(CLICKS_[0]) == 10
-                for qids, uids, vids, clicks in zip(batch['qids'], UIDS, VIDS, CLICKS_):
-                    '''print(qids)
-                    print(uids)
-                    print(vids)
-                    print()'''
-                    qid = dataset.qid_query[qids[0]]
-                    uids = [dataset.uid_url[uid] for uid in uids]
-                    vids = [dataset.vid_vtype[vid] for vid in vids]
-                    '''print(qid)
-                    print(uids)
-                    print(vids)
-                    print()'''
-                    file.write("{}\t{}\t{}\t{}\t{}\t{}\t{}\n".format(0, qid, 0, 0, str(uids[1:]), str(vids[1:]), str(clicks)))
-                #exit(0)
-        self.logger.info('Finish synthetic dataset generation...')
-        file.close()
+                    QIDS, UIDS, VIDS, CLICKS, TRUE_CLICKS = QIDS.cuda(), UIDS.cuda(), VIDS.cuda(), CLICKS.cuda(), TRUE_CLICKS.cuda()
+
+                self.model.eval()
+                pred_logits, _ = self.model(QIDS, UIDS, VIDS, CLICKS)
+                relevances_batches = pred_logits.data.cpu().numpy().tolist()
+                true_relevances_batches = batch['relevances']
+                
+                for relevances, true_relevances in zip(relevances_batches, true_relevances_batches):
+                    pred_rels = {}
+                    for idx, relevance in enumerate(relevances):
+                        pred_rels[idx] = relevance
+                    
+                    for k in self.trunc_levels:
+                        ideal_ranking_relevances = sorted(true_relevances, reverse=True)[:k]
+                        ranking = sorted([idx for idx in pred_rels], key = lambda idx : pred_rels[idx], reverse=True)
+                        ranking_relevances = [true_relevances[idx] for idx in ranking[:k]]
+                        dcg = self.dcg(ranking_relevances)
+                        idcg = self.dcg(ideal_ranking_relevances)
+                        ndcg = dcg / idcg if idcg > 0 else 1.0
+                        if idcg == 0:
+                            cnt_useless_session[k] += 1
+                        else:
+                            ndcgs[k] += ndcg
+                            cnt_usefull_session[k] += 1
+            
+            for k in self.trunc_levels:
+                ndcgs[k] /= cnt_usefull_session[k]
+        return ndcgs
+
+    def dcg(self, ranking_relevances):
+        """
+        Compute the DCG for a given ranking_relevances
+        """
+        return sum([(2 ** relevance - 1) / math.log(rank + 2, 2) for rank, relevance in enumerate(ranking_relevances)])
 
     def save_model(self, model_dir, model_prefix):
         """
-        Saves the model into model_dir with model_prefix as the model indicator
+        Save the model into model_dir with model_prefix as the model indicator
         """
         torch.save(self.model.state_dict(), os.path.join(model_dir, model_prefix+'_{}.model'.format(self.global_step)))
         torch.save(self.optimizer.state_dict(), os.path.join(model_dir, model_prefix + '_{}.optimizer'.format(self.global_step)))
@@ -498,17 +232,12 @@ class Model(object):
 
     def load_model(self, model_dir, model_prefix, global_step):
         """
-        Restores the model into model_dir from model_prefix as the model indicator
+        Reload the model into model_dir from model_prefix as the model indicator
         """
         optimizer_path = os.path.join(model_dir, model_prefix + '_{}.optimizer'.format(global_step))
-        if not os.path.isfile(optimizer_path):
-            optimizer_path = os.path.join(model_dir, model_prefix + '_best_{}.optimizer'.format(global_step))
-        if os.path.isfile(optimizer_path):
-            self.optimizer.load_state_dict(torch.load(optimizer_path))
-            self.logger.info('Optimizer restored from {}, with prefix {} and global step {}.'.format(model_dir, model_prefix, global_step))
+        self.optimizer.load_state_dict(torch.load(optimizer_path))
+        self.logger.info('Optimizer reloaded from {}, with prefix {} and global step {}.'.format(model_dir, model_prefix, global_step))
         model_path = os.path.join(model_dir, model_prefix + '_{}.model'.format(global_step))
-        if not os.path.isfile(model_path):
-            model_path = os.path.join(model_dir, model_prefix + '_best_{}.model'.format(global_step))
         if use_cuda:
             state_dict = torch.load(model_path)
         else:
